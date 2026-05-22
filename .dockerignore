@@ -1,0 +1,12 @@
+build/
+.gradle/
+.idea/
+.git/
+.kotlin/
+*.md
+openspec/
+src/test/
+.dockerignore
+Dockerfile
+docker-compose.yml
+nginx/

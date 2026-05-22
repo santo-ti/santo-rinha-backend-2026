@@ -9,11 +9,11 @@ group = "dev.santo"
 version = "1.0.0-SNAPSHOT"
 
 application {
-    mainClass = "io.ktor.server.cio.EngineMain"
+    mainClass = "dev.santo.MainKt"
 }
 
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(25)
 }
 dependencies {
     implementation(ktorLibs.serialization.kotlinx.json)
