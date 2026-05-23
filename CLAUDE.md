@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Submission for **Rinha de Backend 2026** — a high-throughput backend challenge. Performance, resource limits (CPU/memory) and latency under load drive most design decisions. When in doubt, prefer the option that scales better under contention over the one that is more idiomatic.
 
-Stack: Kotlin 2 + JVM 25, Ktor 3.4.0 (CIO engine), kotlinx.serialization, Logback, Gradle Kotlin DSL.
+Stack: Kotlin 2 + JVM 25, Ktor 3.4.0 (CIO engine), kotlinx.serialization, Gradle Kotlin DSL. The **submission image is a GraalVM native-image** — a plain JVM (baseline RSS + 3M-vector index) OOMs under load at 160 MB/instance, so native is required to fit the budget. No Logback (SLF4J falls back to NOP); routes use explicit compile-time serializers (no ContentNegotiation) to keep the hot path lean and native-friendly.
 
 ## Commands
 
@@ -25,7 +25,7 @@ All commands use the Gradle wrapper. On Windows use `gradlew.bat`; on Bash use `
 # Tests
 ./gradlew test
 ./gradlew test --tests "dev.santo.ServerTest"
-./gradlew test --tests "dev.santo.ServerTest.test root endpoint"
+./gradlew test --tests "dev.santo.VectorizerTest"
 
 # Continuous test loop
 ./gradlew test -t
@@ -33,8 +33,9 @@ All commands use the Gradle wrapper. On Windows use `gradlew.bat`; on Bash use `
 # Fat / runnable distribution (Ktor plugin tasks)
 ./gradlew buildFatJar
 ./gradlew runFatJar
-./gradlew buildImage         # Docker image via Ktor plugin
-./gradlew publishImageToLocalRegistry
+
+# GraalVM native image (needs a GraalVM JDK; the submission builds this inside Docker)
+./gradlew nativeCompile --no-configuration-cache   # GraalVM plugin tasks aren't cc-compatible
 ```
 
 JVM heap is pre-tuned in `gradle.properties` (Gradle: `-Xmx12g`, Kotlin daemon: `-Xmx8g`). Configuration cache and build cache are enabled — if you see "configuration cache problem" errors, fix the build script rather than disabling the cache.
@@ -54,18 +55,23 @@ docker compose down
 docker compose logs -f lb
 ```
 
-The image is built from the multi-stage `Dockerfile` (Temurin JDK 25 builder → JRE 25 runtime). For the iterative dev loop, keep using `./gradlew run` — Docker is only needed to validate the submission topology and resource limits.
+The image is built from the multi-stage `Dockerfile`: a **GraalVM native-image** builder (downloads the reference dataset → builds the `index.bin` artifact → captures native-image reachability metadata via the tracing agent → `nativeCompile`) into a slim `oraclelinux:9-slim` runtime. The native build is heavy (GraalVM image + several minutes + ~6 GB RAM for `native-image`). For the iterative dev loop use `./gradlew run` (plain JVM); the native build is only for the submission. The `native-config/manual-reflect-config.json` supplements the agent metadata for Ktor CIO's reflective field updaters.
 
 ## Architecture
 
 The application is composed of **module extension functions on `Application`**, aggregated by a single root module. This is the pattern to follow when adding new features (auth, DB, metrics, etc.) — create `configureX()` and call it from `rootModule`.
 
 ```
-main.kt                 → embeddedServer(CIO, 8080) { Application::rootModule }
-Application.kt          → rootModule() = configureSerialization() + configureRouting()
-Serialization.kt        → installs ContentNegotiation { json() }
-Routing.kt              → routing { ... } — all HTTP endpoints live here today
+main.kt                 → embeddedServer(CIO, 8080) { rootModule(components) } + IndexLoader.loadAsync
+Application.kt          → rootModule() = configureRouting() + configureFraudScore()
+Routing.kt              → GET /ready (gated on index loaded) + POST /fraud-score (explicit serializers, never 5xx)
+FraudScoreService.kt    → vectorize → k-NN search → decision (k=5, threshold 0.6); FALLBACK on any error
+index/                  → quantization (int8), bucketing + VP-Tree search, binary codec, IndexState, oracle
+vectorization/          → Vectorizer (14 dims) + normalization.json / mcc_risk.json loaders
+tools/BuildIndex.kt     → offline: references.json.gz → index.bin (run at image build, loaded at startup)
 ```
+
+The fraud-detection design (vectorization, exact bucketed VP-Tree search, int8 quantization, native-image, why a plain JVM fails the memory budget) is documented in `openspec/changes/add-fraud-score-endpoint/design.md`.
 
 Tests use `io.ktor.server.testing.testApplication` and bootstrap via `application { rootModule() }`. Always test against `rootModule` (not individual `configureX()` functions) so the full plugin pipeline is exercised.
 
