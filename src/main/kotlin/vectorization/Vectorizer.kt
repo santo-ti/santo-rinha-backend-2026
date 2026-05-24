@@ -17,7 +17,9 @@ const val NO_HISTORY_SENTINEL = -1.0
 
 /**
  * Transforms a transaction payload into the 14-dimension detection vector,
- * following the order and normalization rules from `REGRAS_DE_DETECCAO.md`.
+ * following the order and normalization rules from the official Rinha de Backend
+ * 2026 challenge spec `REGRAS_DE_DETECCAO.md`:
+ * https://github.com/zanfranceschi/rinha-de-backend-2026/blob/main/docs/br/REGRAS_DE_DETECCAO.md
  */
 class Vectorizer(
     private val constants: NormalizationConstants,

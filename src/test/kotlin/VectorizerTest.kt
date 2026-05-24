@@ -27,7 +27,8 @@ class VectorizerTest {
 
     @Test
     fun `legit example from spec produces expected vector`() {
-        // From REGRAS_DE_DETECCAO.md "Visão geral do fluxo".
+        // From the official challenge spec REGRAS_DE_DETECCAO.md, "Visão geral do fluxo":
+        // https://github.com/zanfranceschi/rinha-de-backend-2026/blob/main/docs/br/REGRAS_DE_DETECCAO.md
         val request = FraudScoreRequest(
             id = "tx-1329056812",
             transaction = Transaction(amount = 41.12, installments = 2, requestedAt = "2026-03-11T18:45:53Z"),

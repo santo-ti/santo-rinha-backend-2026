@@ -1,12 +1,12 @@
 # Especificação: transaction-vectorization
 
 ## Purpose
-Define como o payload de uma transação é convertido em um vetor de 14 dimensões na ordem canônica de `REGRAS_DE_DETECCAO.md`: normalização com `clamp` em `[0.0, 1.0]`, sentinela `-1` para `last_transaction` ausente, tabela `mcc_risk` com default `0.5` e a relação invertida de `unknown_merchant`.
+Define como o payload de uma transação é convertido em um vetor de 14 dimensões na ordem canônica de [REGRAS_DE_DETECCAO.md](https://github.com/zanfranceschi/rinha-de-backend-2026/blob/main/docs/br/REGRAS_DE_DETECCAO.md): normalização com `clamp` em `[0.0, 1.0]`, sentinela `-1` para `last_transaction` ausente, tabela `mcc_risk` com default `0.5` e a relação invertida de `unknown_merchant`.
 
 ## Requirements
 
 ### Requirement: Transação é vetorizada em 14 dimensões na ordem canônica
-A API SHALL transformar o payload da transação em um vetor de 14 posições, na ordem e com as fórmulas definidas em `REGRAS_DE_DETECCAO.md`: `[0]` `amount`, `[1]` `installments`, `[2]` `amount_vs_avg`, `[3]` `hour_of_day`, `[4]` `day_of_week`, `[5]` `minutes_since_last_tx`, `[6]` `km_from_last_tx`, `[7]` `km_from_home`, `[8]` `tx_count_24h`, `[9]` `is_online`, `[10]` `card_present`, `[11]` `unknown_merchant`, `[12]` `mcc_risk`, `[13]` `merchant_avg_amount`.
+A API SHALL transformar o payload da transação em um vetor de 14 posições, na ordem e com as fórmulas definidas em [REGRAS_DE_DETECCAO.md](https://github.com/zanfranceschi/rinha-de-backend-2026/blob/main/docs/br/REGRAS_DE_DETECCAO.md): `[0]` `amount`, `[1]` `installments`, `[2]` `amount_vs_avg`, `[3]` `hour_of_day`, `[4]` `day_of_week`, `[5]` `minutes_since_last_tx`, `[6]` `km_from_last_tx`, `[7]` `km_from_home`, `[8]` `tx_count_24h`, `[9]` `is_online`, `[10]` `card_present`, `[11]` `unknown_merchant`, `[12]` `mcc_risk`, `[13]` `merchant_avg_amount`.
 
 #### Scenario: exemplo legítimo da especificação produz o vetor esperado
 - **WHEN** o payload é `{ id: "tx-1329056812", transaction: { amount: 41.12, installments: 2, requested_at: "2026-03-11T18:45:53Z" }, customer: { avg_amount: 82.24, tx_count_24h: 3, known_merchants: ["MERC-003", "MERC-016"] }, merchant: { id: "MERC-016", mcc: "5411", avg_amount: 60.25 }, terminal: { is_online: false, card_present: true, km_from_home: 29.23 }, last_transaction: null }`
