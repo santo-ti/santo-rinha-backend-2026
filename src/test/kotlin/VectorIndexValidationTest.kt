@@ -1,6 +1,6 @@
 package dev.santo
 
-import dev.santo.api.dto.FraudScoreRequest
+import dev.santo.dto.FraudScoreRequest
 import dev.santo.fraud.isApproved
 import dev.santo.fraud.scoreOf
 import dev.santo.search.VectorIndex

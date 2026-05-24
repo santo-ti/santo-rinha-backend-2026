@@ -1,4 +1,4 @@
-package dev.santo.api.dto
+package dev.santo.dto
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -46,11 +46,4 @@ data class Terminal(
 data class LastTransaction(
     val timestamp: String,
     @SerialName("km_from_current") val kmFromCurrent: Double,
-)
-
-/** Response body for `POST /fraud-score`. */
-@Serializable
-data class FraudScoreResponse(
-    val approved: Boolean,
-    @SerialName("fraud_score") val fraudScore: Double,
 )

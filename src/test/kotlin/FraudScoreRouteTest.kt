@@ -1,6 +1,6 @@
 package dev.santo
 
-import dev.santo.api.dto.FraudScoreResponse
+import dev.santo.dto.FraudScoreResponse
 import dev.santo.bootstrap.rootModule
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody

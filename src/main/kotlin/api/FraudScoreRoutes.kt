@@ -1,8 +1,8 @@
 package dev.santo.api
 
-import dev.santo.api.dto.FraudScoreRequest
-import dev.santo.api.dto.FraudScoreResponse
 import dev.santo.bootstrap.AppComponents
+import dev.santo.dto.FraudScoreRequest
+import dev.santo.dto.FraudScoreResponse
 import dev.santo.fraud.FraudDetectorService
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
