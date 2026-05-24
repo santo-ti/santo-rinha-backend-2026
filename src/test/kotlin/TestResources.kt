@@ -1,6 +1,7 @@
 package dev.santo
 
-import dev.santo.index.VectorIndex
+import dev.santo.bootstrap.AppComponents
+import dev.santo.search.VectorIndex
 
 /** Reads a classpath resource from `src/test/resources` as text. */
 fun readTestResource(path: String): String =

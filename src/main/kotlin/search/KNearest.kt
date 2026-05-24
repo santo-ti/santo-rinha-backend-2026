@@ -1,4 +1,4 @@
-package dev.santo.index
+package dev.santo.search
 
 /**
  * Bounded buffer keeping the [k] smallest distances seen so far with their fraud

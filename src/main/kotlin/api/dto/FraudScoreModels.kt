@@ -1,4 +1,4 @@
-package dev.santo.model
+package dev.santo.api.dto
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable

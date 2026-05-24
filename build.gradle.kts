@@ -10,7 +10,7 @@ group = "dev.santo"
 version = "1.0.0-SNAPSHOT"
 
 application {
-    mainClass = "dev.santo.MainKt"
+    mainClass = "dev.santo.bootstrap.MainKt"
 }
 
 kotlin {
@@ -32,7 +32,7 @@ dependencies {
 graalvmNative {
     binaries.named("main") {
         imageName.set("rinha-server")
-        mainClass.set("dev.santo.MainKt")
+        mainClass.set("dev.santo.bootstrap.MainKt")
         buildArgs.add("--no-fallback")
         // Reachability metadata captured by the native-image agent at build time
         // (see Dockerfile.native), plus a manual supplement for Ktor CIO's

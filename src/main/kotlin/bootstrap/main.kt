@@ -1,4 +1,4 @@
-package dev.santo
+package dev.santo.bootstrap
 
 import io.ktor.server.application.*
 import io.ktor.server.cio.CIO

@@ -1,6 +1,6 @@
 package dev.santo.vectorization
 
-import dev.santo.model.FraudScoreRequest
+import dev.santo.api.dto.FraudScoreRequest
 import java.time.Duration
 import java.time.Instant
 import java.time.ZoneOffset

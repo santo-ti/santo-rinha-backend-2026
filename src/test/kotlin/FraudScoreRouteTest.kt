@@ -1,6 +1,7 @@
 package dev.santo
 
-import dev.santo.model.FraudScoreResponse
+import dev.santo.api.dto.FraudScoreResponse
+import dev.santo.bootstrap.rootModule
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
@@ -75,7 +76,7 @@ class FraudScoreRouteTest {
         assertTrue(response.decoded().approved)
     }
 
-    private fun withIndex(index: dev.santo.index.VectorIndex, block: suspend ApplicationTestBuilder.() -> Unit) =
+    private fun withIndex(index: dev.santo.search.VectorIndex, block: suspend ApplicationTestBuilder.() -> Unit) =
         testApplication {
             application { rootModule(testComponents(index)) }
             block()

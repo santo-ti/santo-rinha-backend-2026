@@ -1,4 +1,4 @@
-package dev.santo.index
+package dev.santo.search
 
 /**
  * Holds the search index once it finishes loading. Readiness (`GET /ready`) is

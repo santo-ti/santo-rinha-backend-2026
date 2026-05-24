@@ -61,15 +61,23 @@ The image is built from the multi-stage `Dockerfile`: a **GraalVM native-image**
 
 The application is composed of **module extension functions on `Application`**, aggregated by a single root module. This is the pattern to follow when adding new features (auth, DB, metrics, etc.) — create `configureX()` and call it from `rootModule`.
 
+Packages are organized by layer/intent, with the fraud domain in the foreground (`dev.santo.*`):
+
 ```
-main.kt                 → embeddedServer(CIO, 8080) { rootModule(components) } + IndexLoader.loadAsync
-Application.kt          → rootModule() = configureRouting() + configureFraudScore()
-Routing.kt              → GET /ready (gated on index loaded) + POST /fraud-score (explicit serializers, never 5xx)
-FraudScoreService.kt    → vectorize → k-NN search → decision (k=5, threshold 0.6); FALLBACK on any error
-index/                  → quantization (int8), bucketing + VP-Tree search, binary codec, IndexState, oracle
-vectorization/          → Vectorizer (14 dims) + normalization.json / mcc_risk.json loaders
-tools/BuildIndex.kt     → offline: references.json.gz → index.bin (run at image build, loaded at startup)
+bootstrap/   → main.kt: embeddedServer(CIO, 8080) { rootModule(components) } + IndexLoader.loadAsync;
+               Application.kt: rootModule() = configureRouting() + configureFraudScore(); AppComponents (DI wiring)
+api/         → FraudScoreRoutes.kt: GET /ready (gated on index loaded) + POST /fraud-score
+               (explicit serializers, never 5xx); api/dto/: request/response DTOs
+fraud/       → domain: FraudDetectorService (vectorize → k-NN search → decision; FALLBACK on any error)
+               + FraudPolicy (k=5, threshold 0.6, fraudScore/isApproved, VectorIndex.scoreOf bridge)
+vectorization/ → Vectorizer (14 dims) + normalization.json / mcc_risk.json loaders
+search/      → k-NN engine: quantization (int8), Distance, bucketing + VP-Tree search,
+               IndexReader (binary load), IndexState, VectorIndex / LabeledVector
+tools/       → offline build-tooling: References (JSON parser), IndexBuilder, IndexWriter,
+               BuildIndex.kt (references.json.gz → index.bin at image build, loaded at startup)
 ```
+
+Three execution zones are kept physically separate: production runtime (`bootstrap`/`api`/`fraud`/`vectorization`/`search`), offline build-tooling (`tools`), and test-only oracles (`BruteForceIndex`/`QuantizedBruteForceIndex` live in `src/test`). The runtime loads the binary `index.bin` and never parses the reference JSON — that parser (`References`) is in `tools`.
 
 The fraud-detection design (vectorization, exact bucketed VP-Tree search, int8 quantization, native-image, why a plain JVM fails the memory budget) is documented in `openspec/changes/add-fraud-score-endpoint/design.md`.
 

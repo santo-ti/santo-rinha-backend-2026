@@ -1,14 +1,12 @@
-package dev.santo
+package dev.santo.fraud
 
-import dev.santo.index.IndexState
-import dev.santo.index.isApproved
-import dev.santo.index.scoreOf
-import dev.santo.model.FraudScoreRequest
-import dev.santo.model.FraudScoreResponse
+import dev.santo.api.dto.FraudScoreRequest
+import dev.santo.api.dto.FraudScoreResponse
+import dev.santo.search.IndexState
 import dev.santo.vectorization.Vectorizer
 
 /** Vectorizes a transaction, runs the k-NN search and applies the decision rule. */
-class FraudScoreService(
+class FraudDetectorService(
     private val vectorizer: Vectorizer,
     private val indexState: IndexState,
 ) {

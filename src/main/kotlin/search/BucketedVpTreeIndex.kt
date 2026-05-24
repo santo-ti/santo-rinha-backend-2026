@@ -1,6 +1,6 @@
-package dev.santo.index
+package dev.santo.search
 
-import dev.santo.vectorization.VECTOR_DIMENSIONS
+import dev.santo.fraud.K_NEIGHBORS
 
 /**
  * Production index: references are partitioned into up to [BUCKET_COUNT] buckets
@@ -10,6 +10,9 @@ import dev.santo.vectorization.VECTOR_DIMENSIONS
  * the home bucket, other buckets are visited only when their categorical lower
  * bound is still closer than the current k-th neighbor — so no closer neighbor
  * is ever skipped.
+ *
+ * Built offline by `tools.IndexBuilder`; the runtime only reconstructs it from a
+ * prebuilt artifact via [fromParts].
  */
 class BucketedVpTreeIndex internal constructor(
     internal val store: ByteArray,
@@ -39,26 +42,6 @@ class BucketedVpTreeIndex internal constructor(
     }
 
     companion object {
-        fun build(references: List<LabeledVector>, dim: Int = VECTOR_DIMENSIONS): BucketedVpTreeIndex {
-            val n = references.size
-            val store = ByteArray(n * dim)
-            val labels = BooleanArray(n)
-            val idsBySignature = Array(BUCKET_COUNT) { ArrayList<Int>() }
-
-            for (i in 0 until n) {
-                val reference = references[i]
-                System.arraycopy(quantizeVector(reference.vector), 0, store, i * dim, dim)
-                labels[i] = reference.isFraud
-                idsBySignature[signatureOf(reference.vector)].add(i)
-            }
-
-            val buckets = Array<VpTree?>(BUCKET_COUNT) { signature ->
-                val ids = idsBySignature[signature]
-                if (ids.isEmpty()) null else VpTree.build(ids.toIntArray(), store, labels, dim)
-            }
-            return BucketedVpTreeIndex(store, labels, dim, buckets)
-        }
-
         /** Reconstructs an index from deserialized parts without rebuilding the trees. */
         fun fromParts(
             store: ByteArray,

@@ -1,11 +1,11 @@
 package dev.santo
 
-import dev.santo.model.Customer
-import dev.santo.model.FraudScoreRequest
-import dev.santo.model.LastTransaction
-import dev.santo.model.Merchant
-import dev.santo.model.Terminal
-import dev.santo.model.Transaction
+import dev.santo.api.dto.Customer
+import dev.santo.api.dto.FraudScoreRequest
+import dev.santo.api.dto.LastTransaction
+import dev.santo.api.dto.Merchant
+import dev.santo.api.dto.Terminal
+import dev.santo.api.dto.Transaction
 import dev.santo.vectorization.ReferenceResources
 import dev.santo.vectorization.Vectorizer
 import kotlin.test.Test

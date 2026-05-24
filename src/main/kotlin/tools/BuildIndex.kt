@@ -1,8 +1,5 @@
 package dev.santo.tools
 
-import dev.santo.index.BucketedVpTreeIndex
-import dev.santo.index.IndexCodec
-import dev.santo.index.References
 import java.io.File
 import java.util.zip.GZIPInputStream
 
@@ -22,7 +19,7 @@ fun main(args: Array<String>) {
         References.parse(stream)
     }
 
-    val index = BucketedVpTreeIndex.build(references)
-    output.outputStream().buffered().use { IndexCodec.writeTo(index, it) }
+    val index = IndexBuilder.build(references)
+    output.outputStream().buffered().use { IndexWriter.writeTo(index, it) }
     println("Built index: ${references.size} references -> ${output.length()} bytes at ${output.path}")
 }

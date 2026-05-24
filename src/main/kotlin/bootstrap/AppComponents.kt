@@ -1,6 +1,6 @@
-package dev.santo
+package dev.santo.bootstrap
 
-import dev.santo.index.IndexState
+import dev.santo.search.IndexState
 import dev.santo.vectorization.ReferenceResources
 import dev.santo.vectorization.Vectorizer
 

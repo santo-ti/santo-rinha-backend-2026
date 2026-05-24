@@ -1,13 +1,11 @@
-package dev.santo.index
+package dev.santo.tools
 
+import dev.santo.search.LabeledVector
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.decodeFromStream
 import java.io.InputStream
-
-/** A reference vector (14 dims) with its fraud label. */
-class LabeledVector(val vector: DoubleArray, val isFraud: Boolean)
 
 @Serializable
 private class ReferenceRecord(val vector: DoubleArray, val label: String)
