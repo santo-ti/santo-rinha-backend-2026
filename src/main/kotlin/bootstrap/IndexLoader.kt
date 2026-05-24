@@ -1,7 +1,7 @@
-package dev.santo
+package dev.santo.bootstrap
 
-import dev.santo.index.IndexCodec
-import dev.santo.index.IndexState
+import dev.santo.search.IndexReader
+import dev.santo.search.IndexState
 import java.io.File
 
 /**
@@ -29,7 +29,7 @@ object IndexLoader {
         }
         try {
             val startedAt = System.nanoTime()
-            val index = file.inputStream().buffered().use { IndexCodec.readFrom(it) }
+            val index = file.inputStream().buffered().use { IndexReader.readFrom(it) }
             state.publish(index)
             println("Index loaded from $path in ${(System.nanoTime() - startedAt) / 1_000_000} ms")
         } catch (error: Exception) {

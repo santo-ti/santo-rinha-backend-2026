@@ -1,5 +1,6 @@
 package dev.santo
 
+import dev.santo.bootstrap.rootModule
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders

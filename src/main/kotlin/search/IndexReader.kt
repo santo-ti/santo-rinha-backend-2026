@@ -1,49 +1,22 @@
-package dev.santo.index
+package dev.santo.search
 
 import java.io.DataInputStream
-import java.io.DataOutputStream
 import java.io.InputStream
-import java.io.OutputStream
 
 /**
- * Binary serialization for a prebuilt [BucketedVpTreeIndex]. Built offline (image
- * build) and loaded as-is at startup, so the runtime never parses JSON nor
- * rebuilds any tree.
+ * Reads a prebuilt [BucketedVpTreeIndex] from the binary artifact built offline
+ * (image build). Loaded as-is at startup, so the runtime never parses JSON nor
+ * rebuilds any tree. The writing half lives in `tools.IndexWriter`; both share
+ * [INDEX_MAGIC] and [BUCKET_COUNT] as the single source of the layout.
  *
  * Layout: magic, dim, n, quantized store (`n*dim` bytes), packed label bitset,
  * then per bucket the reordered ids and node thresholds.
  */
-object IndexCodec {
-    private const val MAGIC = 0x46534931 // "FSI1"
-
-    fun writeTo(index: BucketedVpTreeIndex, output: OutputStream) {
-        val out = DataOutputStream(output)
-        val n = index.labels.size
-        out.writeInt(MAGIC)
-        out.writeInt(index.dim)
-        out.writeInt(n)
-        out.write(index.store)
-        out.write(packBits(index.labels))
-
-        out.writeInt(BUCKET_COUNT)
-        for (b in 0 until BUCKET_COUNT) {
-            val tree = index.bucket(b)
-            if (tree == null) {
-                out.writeInt(0)
-                continue
-            }
-            val ids = tree.orderedIds()
-            val thresholds = tree.thresholds()
-            out.writeInt(ids.size)
-            for (id in ids) out.writeInt(id)
-            for (t in thresholds) out.writeFloat(t)
-        }
-        out.flush()
-    }
+object IndexReader {
 
     fun readFrom(input: InputStream): BucketedVpTreeIndex {
         val inp = DataInputStream(input)
-        require(inp.readInt() == MAGIC) { "Bad index artifact: magic mismatch" }
+        require(inp.readInt() == INDEX_MAGIC) { "Bad index artifact: magic mismatch" }
         val dim = inp.readInt()
         val n = inp.readInt()
 
@@ -64,14 +37,6 @@ object IndexCodec {
             bucketThresholds[b] = thresholds
         }
         return BucketedVpTreeIndex.fromParts(store, labels, dim, bucketIds, bucketThresholds)
-    }
-
-    private fun packBits(flags: BooleanArray): ByteArray {
-        val bytes = ByteArray((flags.size + 7) / 8)
-        for (i in flags.indices) {
-            if (flags[i]) bytes[i ushr 3] = (bytes[i ushr 3].toInt() or (1 shl (i and 7))).toByte()
-        }
-        return bytes
     }
 
     private fun unpackBits(bytes: ByteArray, count: Int): BooleanArray {

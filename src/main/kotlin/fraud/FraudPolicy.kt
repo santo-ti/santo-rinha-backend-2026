@@ -1,4 +1,6 @@
-package dev.santo.index
+package dev.santo.fraud
+
+import dev.santo.search.VectorIndex
 
 /** Number of nearest neighbors used to vote. */
 const val K_NEIGHBORS = 5
@@ -14,12 +16,9 @@ fun fraudScore(fraudNeighbors: Int): Double = fraudNeighbors.toDouble() / K_NEIG
 
 fun isApproved(fraudScore: Double): Boolean = fraudScore < FRAUD_THRESHOLD
 
-/** Squared Euclidean distance over two equal-length vectors. */
-fun squaredDistance(a: DoubleArray, b: DoubleArray): Double {
-    var sum = 0.0
-    for (i in a.indices) {
-        val diff = a[i] - b[i]
-        sum += diff * diff
-    }
-    return sum
-}
+/**
+ * Fraud score (`fraud_neighbors / K`) for [query] against [this] index. The
+ * bridge between the domain rule and the search engine: composes the engine's
+ * neighbor count with the domain's [fraudScore].
+ */
+fun VectorIndex.scoreOf(query: DoubleArray): Double = fraudScore(nearestFraudCount(query))

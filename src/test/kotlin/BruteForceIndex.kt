@@ -1,9 +1,13 @@
-package dev.santo.index
+package dev.santo
+
+import dev.santo.fraud.K_NEIGHBORS
+import dev.santo.search.LabeledVector
+import dev.santo.search.VectorIndex
 
 /**
  * Exact k-NN by brute force over `Double` vectors. Used as the correctness
- * oracle (it mirrors how the test ground truth was generated) and during the
- * offline index build — never on the request hot path.
+ * oracle (it mirrors how the test ground truth was generated) — never on the
+ * request hot path.
  */
 class BruteForceIndex(private val references: List<LabeledVector>) : VectorIndex {
 
@@ -27,4 +31,14 @@ class BruteForceIndex(private val references: List<LabeledVector>) : VectorIndex
         }
         return bestFraud.count { it }
     }
+}
+
+/** Squared Euclidean distance over two equal-length vectors (oracle helper). */
+fun squaredDistance(a: DoubleArray, b: DoubleArray): Double {
+    var sum = 0.0
+    for (i in a.indices) {
+        val diff = a[i] - b[i]
+        sum += diff * diff
+    }
+    return sum
 }

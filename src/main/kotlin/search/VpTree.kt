@@ -1,4 +1,4 @@
-package dev.santo.index
+package dev.santo.search
 
 import kotlin.math.sqrt
 

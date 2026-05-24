@@ -1,13 +1,11 @@
 package dev.santo
 
-import dev.santo.index.BruteForceIndex
-import dev.santo.index.BucketedVpTreeIndex
-import dev.santo.index.QuantizedBruteForceIndex
-import dev.santo.index.References
-import dev.santo.index.VectorIndex
-import dev.santo.index.isApproved
-import dev.santo.index.scoreOf
-import dev.santo.model.FraudScoreRequest
+import dev.santo.api.dto.FraudScoreRequest
+import dev.santo.fraud.isApproved
+import dev.santo.fraud.scoreOf
+import dev.santo.search.VectorIndex
+import dev.santo.tools.IndexBuilder
+import dev.santo.tools.References
 import dev.santo.vectorization.ReferenceResources
 import dev.santo.vectorization.Vectorizer
 import kotlinx.serialization.json.Json
@@ -30,7 +28,7 @@ class VectorIndexValidationTest {
     private val json = Json { ignoreUnknownKeys = true }
     private val doubleOracle = BruteForceIndex(references)
     private val quantizedOracle = QuantizedBruteForceIndex(references)
-    private val prototype = BucketedVpTreeIndex.build(references)
+    private val prototype = IndexBuilder.build(references)
 
     /** Query set: every reference vector plus every example payload, vectorized. */
     private fun queries(): List<DoubleArray> {

@@ -1,8 +1,9 @@
 package dev.santo
 
-import dev.santo.index.BucketedVpTreeIndex
-import dev.santo.index.IndexCodec
-import dev.santo.index.References
+import dev.santo.search.IndexReader
+import dev.santo.tools.IndexBuilder
+import dev.santo.tools.IndexWriter
+import dev.santo.tools.References
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import kotlin.test.Test
@@ -14,11 +15,11 @@ class IndexCodecTest {
 
     @Test
     fun `round trip preserves fraud counts for every reference`() {
-        val original = BucketedVpTreeIndex.build(references)
+        val original = IndexBuilder.build(references)
 
         val buffer = ByteArrayOutputStream()
-        IndexCodec.writeTo(original, buffer)
-        val restored = IndexCodec.readFrom(ByteArrayInputStream(buffer.toByteArray()))
+        IndexWriter.writeTo(original, buffer)
+        val restored = IndexReader.readFrom(ByteArrayInputStream(buffer.toByteArray()))
 
         for (reference in references) {
             assertEquals(

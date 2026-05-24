@@ -1,10 +1,9 @@
 package dev.santo
 
-import dev.santo.index.BruteForceIndex
-import dev.santo.index.FRAUD_THRESHOLD
-import dev.santo.index.References
-import dev.santo.index.fraudScore
-import dev.santo.index.isApproved
+import dev.santo.fraud.FRAUD_THRESHOLD
+import dev.santo.fraud.fraudScore
+import dev.santo.fraud.isApproved
+import dev.santo.tools.References
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
