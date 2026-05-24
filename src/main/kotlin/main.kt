@@ -1,13 +1,16 @@
 package dev.santo
 
-import io.ktor.server.engine.*
 import io.ktor.server.application.*
+import io.ktor.server.cio.CIO
+import io.ktor.server.engine.*
 
-fun main(args: Array<String>) {
+fun main() {
+    val components = AppComponents.create()
+    IndexLoader.loadAsync(components.indexState)
     embeddedServer(
-        factory = io.ktor.server.cio.CIO,
+        factory = CIO,
         port = 8080,
         host = "0.0.0.0",
-        module = Application::rootModule
+        module = { rootModule(components) },
     ).start(wait = true)
 }

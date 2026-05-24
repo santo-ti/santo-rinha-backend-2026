@@ -1,0 +1,4 @@
+[
+  { "name": "io.ktor.network.selector.InterestSuspensionsMap", "allDeclaredFields": true },
+  { "name": "io.ktor.network.selector.SelectableBase", "allDeclaredFields": true }
+]

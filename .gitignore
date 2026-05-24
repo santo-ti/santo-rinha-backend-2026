@@ -49,3 +49,10 @@ gradle-app.setting
 .classpath
 
 /.idea/
+
+# Reference dataset and generated index artifact (downloaded/built, never committed)
+references.json.gz
+*.bin
+
+# Local load-test workspace (downloaded k6 script + 26MB data, results, diag overrides)
+loadtest/
