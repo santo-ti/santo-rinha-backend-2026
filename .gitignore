@@ -56,3 +56,5 @@ references.json.gz
 
 # Local load-test workspace (downloaded k6 script + 26MB data, results, diag overrides)
 loadtest/
+
+/openspec/changes/
