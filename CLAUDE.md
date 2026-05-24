@@ -67,7 +67,9 @@ Packages are organized by layer/intent, with the fraud domain in the foreground 
 bootstrap/   → main.kt: embeddedServer(CIO, 8080) { rootModule(components) } + IndexLoader.loadAsync;
                Application.kt: rootModule() = configureRouting() + configureFraudScore(); AppComponents (DI wiring)
 api/         → FraudScoreRoutes.kt: GET /ready (gated on index loaded) + POST /fraud-score
-               (explicit serializers, never 5xx); api/dto/: request/response DTOs
+               (explicit serializers, never 5xx)
+dto/         → neutral request/response DTOs (FraudScoreRequest.kt + sub-DTOs, FraudScoreResponse.kt);
+               shared by the HTTP edge and the domain — belongs to no layer
 fraud/       → domain: FraudDetectorService (vectorize → k-NN search → decision; FALLBACK on any error)
                + FraudPolicy (k=5, threshold 0.6, fraudScore/isApproved, VectorIndex.scoreOf bridge)
 vectorization/ → Vectorizer (14 dims) + normalization.json / mcc_risk.json loaders
@@ -77,7 +79,9 @@ tools/       → offline build-tooling: References (JSON parser), IndexBuilder, 
                BuildIndex.kt (references.json.gz → index.bin at image build, loaded at startup)
 ```
 
-Three execution zones are kept physically separate: production runtime (`bootstrap`/`api`/`fraud`/`vectorization`/`search`), offline build-tooling (`tools`), and test-only oracles (`BruteForceIndex`/`QuantizedBruteForceIndex` live in `src/test`). The runtime loads the binary `index.bin` and never parses the reference JSON — that parser (`References`) is in `tools`.
+Three execution zones are kept physically separate: production runtime (`bootstrap`/`api`/`dto`/`fraud`/`vectorization`/`search`), offline build-tooling (`tools`), and test-only oracles (`BruteForceIndex`/`QuantizedBruteForceIndex` live in `src/test`). The runtime loads the binary `index.bin` and never parses the reference JSON — that parser (`References`) is in `tools`.
+
+Dependencies point inward (or to the neutral `dto`), never outward: the domain packages (`fraud`, `vectorization`) MUST NOT import the API layer (`dev.santo.api`). Shared request/response types live in the neutral `dev.santo.dto`. The only production code that imports `dev.santo.api` is the composition root `bootstrap` (`rootModule` wires `configureRouting`/`configureFraudScore`), which legitimately assembles every layer.
 
 The fraud-detection design (vectorization, exact bucketed VP-Tree search, int8 quantization, native-image, why a plain JVM fails the memory budget) is documented in `openspec/changes/add-fraud-score-endpoint/design.md`.
 

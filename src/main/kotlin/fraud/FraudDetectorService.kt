@@ -1,7 +1,7 @@
 package dev.santo.fraud
 
-import dev.santo.api.dto.FraudScoreRequest
-import dev.santo.api.dto.FraudScoreResponse
+import dev.santo.dto.FraudScoreRequest
+import dev.santo.dto.FraudScoreResponse
 import dev.santo.search.IndexState
 import dev.santo.vectorization.Vectorizer
 
