@@ -6,7 +6,8 @@ WORKDIR /app
 RUN microdnf install -y curl || true
 
 # Cache the reference dataset download early (independent of source changes).
-ARG REFERENCES_URL=https://raw.githubusercontent.com/santo-ti/rinha-de-backend-2026/main/resources/references.json.gz
+# Defaults to the official challenge dataset; override at build time if needed.
+ARG REFERENCES_URL=https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/resources/references.json.gz
 RUN curl -sSL "$REFERENCES_URL" -o /refs.json.gz
 
 COPY gradlew settings.gradle.kts build.gradle.kts gradle.properties ./

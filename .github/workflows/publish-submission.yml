@@ -1,0 +1,107 @@
+name: Publish image & submission branch
+
+# Builds the GraalVM native-image, publishes it to GHCR under an immutable,
+# versioned tag (never `latest`), and — in the same job, to keep the branch and
+# the image atomic — materializes the orphan `submission` branch with only the
+# files the Rinha evaluation needs (docker-compose.yml + nginx.conf + info.json).
+#
+# Trigger by pushing a version tag (e.g. `git tag v1.0.0 && git push origin v1.0.0`)
+# or manually via the Actions tab (workflow_dispatch) supplying a version.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Image version (without leading v), e.g. 1.0.0"
+        required: true
+        type: string
+
+concurrency:
+  group: publish-submission
+  cancel-in-progress: false
+
+permissions:
+  contents: write   # push the `submission` branch
+  packages: write   # push the image to GHCR
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute version and image reference
+        id: meta
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if [ -z "${VERSION}" ]; then
+            echo "::error::No version resolved"; exit 1
+          fi
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"   # GHCR requires a lowercase path
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "image_ref=${IMAGE}:${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Publishing ${IMAGE}:${VERSION}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image (linux/amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: |
+            ${{ steps.meta.outputs.image_ref }}
+            ${{ steps.meta.outputs.image }}:sha-${{ github.sha }}
+
+      - name: Materialize the submission branch
+        env:
+          IMAGE_REF: ${{ steps.meta.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+          # Stage the three evaluation files into a temp dir first, then rebuild
+          # the working tree on an orphan branch with only those files.
+          staging="$(mktemp -d)"
+          sed "s#__IMAGE_REF__#${IMAGE_REF}#g" submission/docker-compose.yml > "${staging}/docker-compose.yml"
+          cp nginx/nginx.conf "${staging}/nginx.conf"
+          cp info.json "${staging}/info.json"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan submission-build
+          git rm -rf --quiet . || true
+
+          cp "${staging}/docker-compose.yml" docker-compose.yml
+          cp "${staging}/nginx.conf" nginx.conf
+          cp "${staging}/info.json" info.json
+
+          git add docker-compose.yml nginx.conf info.json
+          git commit -m "submission: ${IMAGE_REF}"
+          git push -f origin submission-build:submission
+
+      - name: Reminder — make the GHCR package public
+        run: |
+          echo "::notice::GHCR packages are private by default. Ensure the package"
+          echo "::notice::'${{ steps.meta.outputs.image }}' visibility is set to Public"
+          echo "::notice::(repo/org Packages settings) so 'docker pull' works without login."

@@ -1,0 +1,7 @@
+{
+  "participants": ["Anderson Santo"],
+  "social": ["https://www.linkedin.com/in/andersonsantoti/"],
+  "source-code-repo": "https://github.com/santo-ti/santo-rinha-backend-2026",
+  "stack": ["kotlin", "ktor", "graalvm", "nginx"],
+  "open_to_work": false
+}
