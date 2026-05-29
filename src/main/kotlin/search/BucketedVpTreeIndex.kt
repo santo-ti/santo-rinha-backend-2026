@@ -19,24 +19,35 @@ class BucketedVpTreeIndex internal constructor(
     internal val labels: BooleanArray,
     internal val dim: Int,
     private val buckets: Array<VpTree?>,
+    private val searchBudget: Int = Int.MAX_VALUE,
 ) : VectorIndex {
 
     internal fun bucket(signature: Int): VpTree? = buckets[signature]
 
-    override fun nearestFraudCount(query: DoubleArray): Int {
+    override fun nearestFraudCount(query: DoubleArray): Int =
+        nearestFraudCount(query, SearchBudget.of(searchBudget))
+
+    /**
+     * Same search with an explicit [budget], shared across all buckets so the cap
+     * is per query. An unlimited budget is exact; a finite one bounds the distance
+     * evaluations (closest bucket and subtrees first), trading a little recall for
+     * a hard latency ceiling.
+     */
+    internal fun nearestFraudCount(query: DoubleArray, budget: SearchBudget): Int {
         val queryCodes = IntArray(dim) { quantizeToLogicalCode(query[it]) }
         val sig = signatureOf(query)
         val knn = KNearest(K_NEIGHBORS)
 
-        buckets[sig]?.search(queryCodes, knn)
+        buckets[sig]?.search(queryCodes, knn, budget)
         for (b in buckets.indices) {
             if (b == sig) continue
+            if (budget.exhausted()) break
             val tree = buckets[b] ?: continue
             if (knn.isFull()) {
                 val worst = knn.worst()
                 if (categoricalLowerBoundSquared(sig, b).toDouble() >= worst * worst) continue
             }
-            tree.search(queryCodes, knn)
+            tree.search(queryCodes, knn, budget)
         }
         return knn.fraudCount()
     }
@@ -49,12 +60,13 @@ class BucketedVpTreeIndex internal constructor(
             dim: Int,
             bucketIds: Array<IntArray?>,
             bucketThresholds: Array<FloatArray?>,
+            searchBudget: Int = Int.MAX_VALUE,
         ): BucketedVpTreeIndex {
             val buckets = Array<VpTree?>(BUCKET_COUNT) { b ->
                 val ids = bucketIds[b] ?: return@Array null
                 VpTree.fromPrebuilt(ids, bucketThresholds[b]!!, store, labels, dim)
             }
-            return BucketedVpTreeIndex(store, labels, dim, buckets)
+            return BucketedVpTreeIndex(store, labels, dim, buckets, searchBudget)
         }
     }
 }

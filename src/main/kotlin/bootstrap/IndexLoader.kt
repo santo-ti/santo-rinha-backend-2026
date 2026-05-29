@@ -1,5 +1,6 @@
 package dev.santo.bootstrap
 
+import dev.santo.fraud.SEARCH_BUDGET
 import dev.santo.search.IndexReader
 import dev.santo.search.IndexState
 import java.io.File
@@ -29,9 +30,9 @@ object IndexLoader {
         }
         try {
             val startedAt = System.nanoTime()
-            val index = file.inputStream().buffered().use { IndexReader.readFrom(it) }
+            val index = file.inputStream().buffered().use { IndexReader.readFrom(it, SEARCH_BUDGET) }
             state.publish(index)
-            println("Index loaded from $path in ${(System.nanoTime() - startedAt) / 1_000_000} ms")
+            println("Index loaded from $path in ${(System.nanoTime() - startedAt) / 1_000_000} ms (search budget=$SEARCH_BUDGET)")
         } catch (error: Exception) {
             System.err.println("Failed to load index artifact at $path: ${error.message}")
         }

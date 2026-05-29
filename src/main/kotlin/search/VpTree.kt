@@ -7,8 +7,11 @@ import kotlin.math.sqrt
  * reordered so the tree structure is implicit (no per-node objects) — the only
  * per-point overhead is one `Float` threshold, which keeps 3M points affordable.
  *
- * Search is exact: pruning relies on the triangle inequality over the Euclidean
- * metric, so it never discards a true nearest neighbor. A prebuilt tree can be
+ * Search pruning relies on the triangle inequality over the Euclidean metric. A
+ * [SearchBudget] caps the distance evaluations: an unlimited budget keeps the
+ * search exact (never discards a true nearest neighbor), while a finite one makes
+ * it approximate — the traversal visits the closest regions first, so the cap
+ * trades a little recall for a hard ceiling on work. A prebuilt tree can be
  * reconstructed from its reordered [ids] and [thresholds] without rebuilding.
  */
 class VpTree private constructor(
@@ -24,23 +27,25 @@ class VpTree private constructor(
 
     internal fun thresholds(): FloatArray = thresholds
 
-    fun search(queryCodes: IntArray, knn: KNearest) = searchNode(0, ids.size, queryCodes, knn)
+    fun search(queryCodes: IntArray, knn: KNearest, budget: SearchBudget) =
+        searchNode(0, ids.size, queryCodes, knn, budget)
 
-    private fun searchNode(lo: Int, hi: Int, queryCodes: IntArray, knn: KNearest) {
-        if (lo >= hi) return
+    private fun searchNode(lo: Int, hi: Int, queryCodes: IntArray, knn: KNearest, budget: SearchBudget) {
+        if (lo >= hi || budget.exhausted()) return
         val vp = ids[lo]
         val d = dist(queryCodes, vp)
+        budget.consume()
         knn.offer(d, labels[vp])
         if (hi - lo == 1) return
 
         val mid = lo + 1 + (hi - lo - 1) / 2
         val tau = thresholds[lo]
         if (d < tau) {
-            searchNode(lo + 1, mid, queryCodes, knn)
-            if (d + knn.worst() >= tau) searchNode(mid, hi, queryCodes, knn)
+            searchNode(lo + 1, mid, queryCodes, knn, budget)
+            if (d + knn.worst() >= tau) searchNode(mid, hi, queryCodes, knn, budget)
         } else {
-            searchNode(mid, hi, queryCodes, knn)
-            if (d - knn.worst() <= tau) searchNode(lo + 1, mid, queryCodes, knn)
+            searchNode(mid, hi, queryCodes, knn, budget)
+            if (d - knn.worst() <= tau) searchNode(lo + 1, mid, queryCodes, knn, budget)
         }
     }
 

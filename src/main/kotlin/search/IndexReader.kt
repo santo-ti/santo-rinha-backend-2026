@@ -14,7 +14,7 @@ import java.io.InputStream
  */
 object IndexReader {
 
-    fun readFrom(input: InputStream): BucketedVpTreeIndex {
+    fun readFrom(input: InputStream, searchBudget: Int = Int.MAX_VALUE): BucketedVpTreeIndex {
         val inp = DataInputStream(input)
         require(inp.readInt() == INDEX_MAGIC) { "Bad index artifact: magic mismatch" }
         val dim = inp.readInt()
@@ -36,7 +36,7 @@ object IndexReader {
             bucketIds[b] = ids
             bucketThresholds[b] = thresholds
         }
-        return BucketedVpTreeIndex.fromParts(store, labels, dim, bucketIds, bucketThresholds)
+        return BucketedVpTreeIndex.fromParts(store, labels, dim, bucketIds, bucketThresholds, searchBudget)
     }
 
     private fun unpackBits(bytes: ByteArray, count: Int): BooleanArray {
