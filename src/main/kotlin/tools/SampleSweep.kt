@@ -74,7 +74,7 @@ fun main(args: Array<String>) {
     val scale = CONTEST_N / n
     println("queries=$n  (scale to 54100: x${ff("%.2f", scale)})")
     println("")
-    println("  sample | budget |   FP |   FN | fail% |  det@n | det@54100 | meanC | p99C")
+    println("  sample | budget |   FP |   FN | fail% |  det@n | det@54100 | meanC | p99C | ns/cmp | us/q")
 
     val out = StringBuilder()
     fun line(s: String) { println(s); out.appendLine(s) }
@@ -85,8 +85,11 @@ fun main(args: Array<String>) {
         val built = (System.nanoTime() - buildStart) / 1e9
         val realN = min(s, references.size)
         for (b in budgets) {
+            // Warm pass (JIT) so the timed ns/comp reflects steady state, not warmup.
+            for (q in queries) index.nearestFraudCount(q.first, SearchBudget.of(b))
             var fp = 0; var fn = 0; var total = 0L
             val comps = IntArray(n)
+            val tSearch = System.nanoTime()
             for (i in queries.indices) {
                 val budget = SearchBudget.of(b)
                 val count = index.nearestFraudCount(queries[i].first, budget)
@@ -96,13 +99,15 @@ fun main(args: Array<String>) {
                 if (queries[i].second && deny) fp++       // legit blocked = FP
                 if (!queries[i].second && !deny) fn++      // fraud approved = FN
             }
+            val nsPerComp = (System.nanoTime() - tSearch).toDouble() / total
             val detN = detScore(fp.toDouble(), fn.toDouble(), n.toDouble())
             val det54 = detScore(fp * scale, fn * scale, CONTEST_N)
             val label = if (s == Int.MAX_VALUE) "ALL" else realN.toString()
             val blab = if (b == Int.MAX_VALUE) "exact" else b.toString()
-            line(ff("%8s | %6s | %4d | %4d | %5.2f | %6.0f | %9.0f | %5.0f | %5d",
+            line(ff("%8s | %6s | %4d | %4d | %5.2f | %6.0f | %9.0f | %5.0f | %5d | %6.1f | %5.1f",
                 label, blab, fp, fn, (fp + fn) * 100.0 / n, detN, det54,
-                total.toDouble() / n, percentile(comps, 99)))
+                total.toDouble() / n, percentile(comps, 99),
+                nsPerComp, total.toDouble() / n * nsPerComp / 1000.0))
         }
         line(ff("  ^ build %.1fs", built))
     }

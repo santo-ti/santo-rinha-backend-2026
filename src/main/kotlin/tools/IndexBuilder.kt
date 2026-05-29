@@ -46,11 +46,36 @@ object IndexBuilder {
             idsBySignature[signatureOf(reference.vector)].add(i)
         }
 
-        val buckets = Array<VpTree?>(BUCKET_COUNT) { signature ->
+        val trees = Array<VpTree?>(BUCKET_COUNT) { signature ->
             val ids = idsBySignature[signature]
             if (ids.isEmpty()) null else VpTree.build(ids.toIntArray(), store, labels, dim)
         }
-        return BucketedVpTreeIndex(store, labels, dim, buckets)
+
+        // Re-lay the store so each bucket's points are contiguous in tree-traversal
+        // order. The search hops between nodes that are near in the tree, so this
+        // turns the scattered (original-sample-order) reads into mostly-local ones.
+        // The full 3M store (42MB) does not fit the contest CPU's cache, where ns/
+        // comp ~3x worse than the cache-resident 100k store; locality recovers that.
+        // Functionally identical: same points, distances, thresholds and topology —
+        // only the byte positions change (the remapped ids stay contiguous per bucket).
+        val packedStore = ByteArray(n * dim)
+        val packedLabels = BooleanArray(n)
+        val buckets = arrayOfNulls<VpTree>(BUCKET_COUNT)
+        var pos = 0
+        for (signature in 0 until BUCKET_COUNT) {
+            val tree = trees[signature] ?: continue
+            val treeIds = tree.orderedIds()
+            val remapped = IntArray(treeIds.size)
+            for (i in treeIds.indices) {
+                val src = treeIds[i]
+                System.arraycopy(store, src * dim, packedStore, pos * dim, dim)
+                packedLabels[pos] = labels[src]
+                remapped[i] = pos
+                pos++
+            }
+            buckets[signature] = VpTree.fromPrebuilt(remapped, tree.thresholds(), packedStore, packedLabels, dim)
+        }
+        return BucketedVpTreeIndex(packedStore, packedLabels, dim, buckets)
     }
 
     /** Uniform random sample without replacement, deterministic via [SAMPLE_SEED]. */
