@@ -24,23 +24,23 @@ class VpTree private constructor(
 
     internal fun thresholds(): FloatArray = thresholds
 
-    fun search(query: ByteArray, knn: KNearest) = searchNode(0, ids.size, query, knn)
+    fun search(queryCodes: IntArray, knn: KNearest) = searchNode(0, ids.size, queryCodes, knn)
 
-    private fun searchNode(lo: Int, hi: Int, query: ByteArray, knn: KNearest) {
+    private fun searchNode(lo: Int, hi: Int, queryCodes: IntArray, knn: KNearest) {
         if (lo >= hi) return
         val vp = ids[lo]
-        val d = dist(query, vp)
+        val d = dist(queryCodes, vp)
         knn.offer(d, labels[vp])
         if (hi - lo == 1) return
 
         val mid = lo + 1 + (hi - lo - 1) / 2
         val tau = thresholds[lo]
         if (d < tau) {
-            searchNode(lo + 1, mid, query, knn)
-            if (d + knn.worst() >= tau) searchNode(mid, hi, query, knn)
+            searchNode(lo + 1, mid, queryCodes, knn)
+            if (d + knn.worst() >= tau) searchNode(mid, hi, queryCodes, knn)
         } else {
-            searchNode(mid, hi, query, knn)
-            if (d - knn.worst() <= tau) searchNode(lo + 1, mid, query, knn)
+            searchNode(mid, hi, queryCodes, knn)
+            if (d - knn.worst() <= tau) searchNode(lo + 1, mid, queryCodes, knn)
         }
     }
 
@@ -54,8 +54,8 @@ class VpTree private constructor(
         build(mid, hi)
     }
 
-    private fun dist(query: ByteArray, pointId: Int): Double =
-        sqrt(squaredDistance(query, store, pointId * dim, dim).toDouble())
+    private fun dist(queryCodes: IntArray, pointId: Int): Double =
+        sqrt(squaredDistance(queryCodes, store, pointId * dim, dim).toDouble())
 
     private fun dist(idA: Int, idB: Int): Double =
         sqrt(squaredDistance(store, idA * dim, idB * dim, dim).toDouble())

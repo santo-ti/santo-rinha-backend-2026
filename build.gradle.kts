@@ -39,8 +39,24 @@ graalvmNative {
         // AtomicReferenceFieldUpdater fields the agent's tracer drops.
         buildArgs.add("-H:ConfigurationFileDirectories=/app/native-config")
         buildArgs.add("-H:ReflectionConfigurationFiles=/app/native-config/manual-reflect-config.json")
-        // Faster builds while iterating; drop for a fully optimized final image.
-        quickBuild.set(true)
+        // Aggressive optimization (Community Edition). The submission is CPU-bound on
+        // the contest's 0.425-CPU budget; the previous quickBuild image shipped an
+        // unoptimized binary that wasted exactly the CPU it could not spare.
+        buildArgs.add("-O3")
+        // Target the SSE4.2 baseline (x86-64-v2): safe on the contest Mac Mini (Late
+        // 2014, Haswell) and on the CI builder. Never use -march=native — the CI CPU
+        // may emit instructions the Mac Mini lacks, crashing with SIGILL at runtime.
+        buildArgs.add("-march=x86-64-v2")
+        // Align the runtime with the cgroup CPU quota (0.425 ≈ 1 core). Without this,
+        // the GC / ForkJoin / CIO pools size to the host's core count and the CFS quota
+        // throttles them in bursts (frozen ~58ms every 100ms), which spikes p99.
+        buildArgs.add("-R:ActiveProcessorCount=1")
+        // Cap the heap so the ~90MB resident index plus per-request churn never races
+        // the 160MB cgroup limit against off-heap/code/stacks (the plain JVM OOM-killed
+        // here; see CLAUDE.md). Leaves ~40MB headroom inside the limit.
+        buildArgs.add("-R:MaxHeapSize=120m")
+        // Fully optimized final image (was true — see -O3 above).
+        quickBuild.set(false)
     }
     metadataRepository {
         enabled.set(true)

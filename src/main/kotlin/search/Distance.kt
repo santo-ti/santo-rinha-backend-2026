@@ -10,6 +10,21 @@ fun squaredDistance(query: ByteArray, store: ByteArray, offset: Int, dim: Int): 
     return sum
 }
 
+/**
+ * Squared Euclidean distance between a query given as precomputed logical codes
+ * and a stored point at [offset]. Identical result to the [ByteArray] overload,
+ * but the query side skips [logicalCode] — it is hoisted out of the traversal's
+ * innermost loop, the hottest path under load.
+ */
+fun squaredDistance(queryCodes: IntArray, store: ByteArray, offset: Int, dim: Int): Long {
+    var sum = 0L
+    for (j in 0 until dim) {
+        val diff = (queryCodes[j] - logicalCode(store[offset + j])).toLong()
+        sum += diff * diff
+    }
+    return sum
+}
+
 /** Squared Euclidean distance between two stored points. */
 fun squaredDistance(store: ByteArray, offsetA: Int, offsetB: Int, dim: Int): Long {
     var sum = 0L

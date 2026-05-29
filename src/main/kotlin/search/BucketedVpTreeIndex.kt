@@ -24,11 +24,11 @@ class BucketedVpTreeIndex internal constructor(
     internal fun bucket(signature: Int): VpTree? = buckets[signature]
 
     override fun nearestFraudCount(query: DoubleArray): Int {
-        val qz = quantizeVector(query)
+        val queryCodes = IntArray(dim) { quantizeToLogicalCode(query[it]) }
         val sig = signatureOf(query)
         val knn = KNearest(K_NEIGHBORS)
 
-        buckets[sig]?.search(qz, knn)
+        buckets[sig]?.search(queryCodes, knn)
         for (b in buckets.indices) {
             if (b == sig) continue
             val tree = buckets[b] ?: continue
@@ -36,7 +36,7 @@ class BucketedVpTreeIndex internal constructor(
                 val worst = knn.worst()
                 if (categoricalLowerBoundSquared(sig, b).toDouble() >= worst * worst) continue
             }
-            tree.search(qz, knn)
+            tree.search(queryCodes, knn)
         }
         return knn.fraudCount()
     }

@@ -22,3 +22,13 @@ fun logicalCode(b: Byte): Int {
     val u = b.toInt() and 0xFF
     return if (u == SENTINEL_UNSIGNED) SENTINEL_LOGICAL else u
 }
+
+/**
+ * Quantizes one dimension straight to its logical code, equal to
+ * `logicalCode(quantize(value))` but without the intermediate byte. Used on the
+ * query side of a search so each dimension's logical code is computed once for
+ * the whole traversal instead of per visited node.
+ */
+fun quantizeToLogicalCode(value: Double): Int =
+    if (value == NO_HISTORY_SENTINEL) SENTINEL_LOGICAL
+    else Math.round(value.coerceIn(0.0, 1.0) * QUANT_SCALE).toInt()

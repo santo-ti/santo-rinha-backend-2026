@@ -27,5 +27,9 @@ class KNearest(private val k: Int) {
         if (filled < k) filled++
     }
 
-    fun fraudCount(): Int = fraud.count { it }
+    fun fraudCount(): Int {
+        var count = 0
+        for (i in 0 until k) if (fraud[i]) count++
+        return count
+    }
 }
