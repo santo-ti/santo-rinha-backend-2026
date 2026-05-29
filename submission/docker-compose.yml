@@ -5,6 +5,12 @@
 # .github/workflows/publish-submission.yml when it materializes the branch.
 x-api: &api
   image: __IMAGE_REF__
+  # Per-query search budget (distance evals). Tunable here WITHOUT rebuilding the
+  # image — the runtime reads $SEARCH_BUDGET (see bootstrap.IndexLoader). Over the
+  # full 3M index, 256 keeps p99 low and stays safely below the 0.425-CPU
+  # saturation point on the contest Mac Mini while lifting det from ~222 to ~696.
+  environment:
+    SEARCH_BUDGET: "256"
   networks:
     - rinha
   deploy:

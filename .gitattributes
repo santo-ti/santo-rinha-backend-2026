@@ -1,0 +1,13 @@
+# Normalize line endings so the image build works regardless of the host OS.
+# `gradlew` and shell scripts MUST stay LF — a CRLF shebang (`#!/bin/sh\r`) makes
+# the Docker build fail with "required file not found" (exit 127). The Windows
+# batch launcher stays CRLF.
+* text=auto
+gradlew text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+
+# Treat the binary artifacts and compressed data as binary.
+*.bin binary
+*.gz binary
+*.jar binary
