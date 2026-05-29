@@ -6,11 +6,12 @@
 x-api: &api
   image: __IMAGE_REF__
   # Per-query search budget (distance evals). Tunable here WITHOUT rebuilding the
-  # image — the runtime reads $SEARCH_BUDGET (see bootstrap.IndexLoader). Over the
-  # full 3M index, 256 keeps p99 low and stays safely below the 0.425-CPU
-  # saturation point on the contest Mac Mini while lifting det from ~222 to ~696.
+  # image — the runtime reads $SEARCH_BUDGET (see bootstrap.IndexLoader). With the
+  # cache-locality store reorder, 2048 runs clean over the full 3M index (local k6:
+  # 0 http_errors, det ~1584). Bump toward 4096 (det ~1859) if the real Mac Mini
+  # p99 stays low.
   environment:
-    SEARCH_BUDGET: "256"
+    SEARCH_BUDGET: "2048"
   networks:
     - rinha
   deploy:
