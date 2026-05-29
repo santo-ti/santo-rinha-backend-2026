@@ -18,15 +18,29 @@ kotlin {
 }
 
 dependencies {
-    // ktor-serialization-kotlinx-json brings kotlinx-serialization-json transitively;
-    // the routes use the compile-time generated serializers directly (no reflection),
-    // so ContentNegotiation is not installed.
-    implementation(ktorLibs.serialization.kotlinx.json)
+    // Compile-time generated serializers (no reflection). Pulled in directly
+    // instead of via Ktor's `ktor-serialization-kotlinx-json` wrapper, which
+    // drags in ktor-serialization + ktor-websockets + kotlin-reflect (~4.7MB
+    // of native image) — and we never install ContentNegotiation.
+    implementation(libs.kotlinx.serialization.json)
     implementation(ktorLibs.server.cio)
     implementation(ktorLibs.server.core)
 
     testImplementation(kotlin("test"))
     testImplementation(ktorLibs.server.testHost)
+}
+
+// Defensive: kotlin-reflect (~4.7MB) is build-time only for the Kotlin compiler,
+// never something the app needs at runtime — exclude it from the runtime/native
+// classpaths so a transitive cannot silently re-bloat the native image.
+configurations.matching {
+    it.name in setOf(
+        "runtimeClasspath",
+        "nativeImageClasspath",
+        "nativeImageCompileClasspath",
+    )
+}.configureEach {
+    exclude(group = "org.jetbrains.kotlin", module = "kotlin-reflect")
 }
 
 graalvmNative {

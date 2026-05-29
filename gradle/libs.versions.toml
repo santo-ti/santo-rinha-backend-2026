@@ -1,13 +1,17 @@
 [versions]
 kotlin = "2.3.21"
-logback = "1.5.21"
+kotlinxSerialization = "1.9.0"
 graalvmNative = "0.10.6"
 
 [libraries]
-logback-classic = { module = "ch.qos.logback:logback-classic", version.ref = "logback" }
+# Compile-time JSON serialization (no reflection). Pulled in directly instead of
+# via the Ktor `ktor-serialization-kotlinx-json` wrapper, which drags in
+# ktor-serialization + ktor-websockets + kotlin-reflect (~4.7MB) — none of which
+# we use, since the routes call the generated serializers and never install
+# ContentNegotiation.
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 
 [plugins]
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
-kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 graalvm-native = { id = "org.graalvm.buildtools.native", version.ref = "graalvmNative" }
