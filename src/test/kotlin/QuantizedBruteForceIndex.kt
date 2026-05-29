@@ -19,7 +19,7 @@ class QuantizedBruteForceIndex(
     references: List<LabeledVector>,
     private val dim: Int = VECTOR_DIMENSIONS,
 ) : VectorIndex {
-    private val store = ByteArray(references.size * dim)
+    private val store = ShortArray(references.size * dim)
     private val labels = BooleanArray(references.size)
 
     init {

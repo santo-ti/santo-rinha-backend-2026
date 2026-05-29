@@ -15,7 +15,7 @@ import dev.santo.fraud.K_NEIGHBORS
  * prebuilt artifact via [fromParts].
  */
 class BucketedVpTreeIndex internal constructor(
-    internal val store: ByteArray,
+    internal val store: ShortArray,
     internal val labels: BooleanArray,
     internal val dim: Int,
     private val buckets: Array<VpTree?>,
@@ -55,16 +55,22 @@ class BucketedVpTreeIndex internal constructor(
     companion object {
         /** Reconstructs an index from deserialized parts without rebuilding the trees. */
         fun fromParts(
-            store: ByteArray,
+            store: ShortArray,
             labels: BooleanArray,
             dim: Int,
-            bucketIds: Array<IntArray?>,
+            bucketSizes: IntArray,
             bucketThresholds: Array<FloatArray?>,
             searchBudget: Int = Int.MAX_VALUE,
         ): BucketedVpTreeIndex {
+            // Buckets are stored back-to-back in signature order, so each bucket's
+            // slice starts at the running sum of the preceding sizes.
+            var base = 0
             val buckets = Array<VpTree?>(BUCKET_COUNT) { b ->
-                val ids = bucketIds[b] ?: return@Array null
-                VpTree.fromPrebuilt(ids, bucketThresholds[b]!!, store, labels, dim)
+                val size = bucketSizes[b]
+                val tree = if (size == 0) null
+                else VpTree.fromPrebuilt(base, size, bucketThresholds[b]!!, store, labels, dim)
+                base += size
+                tree
             }
             return BucketedVpTreeIndex(store, labels, dim, buckets, searchBudget)
         }

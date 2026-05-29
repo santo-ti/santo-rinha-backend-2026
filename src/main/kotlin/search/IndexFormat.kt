@@ -1,8 +1,9 @@
 package dev.santo.search
 
 /**
- * Magic header for the binary index artifact ("FSI1"). The single source of truth
- * for the on-disk format, shared by the reader ([IndexReader], runtime) and the
- * writer (`tools.IndexWriter`, offline build) so the two cannot drift apart.
+ * Magic header for the binary index artifact ("FSI2" — int16 store; bumped from
+ * "FSI1" int8 so an old artifact fails fast instead of being misread). The single
+ * source of truth for the on-disk format, shared by the reader ([IndexReader],
+ * runtime) and the writer (`tools.IndexWriter`, offline build).
  */
-internal const val INDEX_MAGIC = 0x46534931
+internal const val INDEX_MAGIC = 0x46534932

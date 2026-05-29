@@ -5,14 +5,17 @@ import dev.santo.search.BucketedVpTreeIndex
 import dev.santo.search.INDEX_MAGIC
 import java.io.DataOutputStream
 import java.io.OutputStream
+import java.nio.ByteBuffer
 
 /**
  * Serializes a prebuilt [BucketedVpTreeIndex] to the binary artifact during the
  * offline image build. The reading half lives in `search.IndexReader`; both share
  * [INDEX_MAGIC] and [BUCKET_COUNT] as the single source of the layout.
  *
- * Layout: magic, dim, n, quantized store (`n*dim` bytes), packed label bitset,
- * then per bucket the reordered ids and node thresholds.
+ * Layout: magic, dim, n, int16 store (`n*dim` shorts, big-endian), packed label
+ * bitset, then per bucket its point count and node thresholds. Points are stored
+ * contiguously in tree order, so a point's id is `bucketBase + position` — no id
+ * array is serialized.
  */
 object IndexWriter {
 
@@ -22,7 +25,7 @@ object IndexWriter {
         out.writeInt(INDEX_MAGIC)
         out.writeInt(index.dim)
         out.writeInt(n)
-        out.write(index.store)
+        out.write(shortsToBytes(index.store))
         out.write(packBits(index.labels))
 
         out.writeInt(BUCKET_COUNT)
@@ -32,13 +35,19 @@ object IndexWriter {
                 out.writeInt(0)
                 continue
             }
-            val ids = tree.orderedIds()
-            val thresholds = tree.thresholds()
-            out.writeInt(ids.size)
-            for (id in ids) out.writeInt(id)
-            for (t in thresholds) out.writeFloat(t)
+            // Points are stored contiguously in tree order, so only the per-bucket
+            // size and node thresholds are needed — no id array (it is base+position).
+            out.writeInt(tree.size)
+            for (t in tree.thresholds()) out.writeFloat(t)
         }
         out.flush()
+    }
+
+    /** Big-endian byte image of the int16 store (2 bytes per dimension). */
+    private fun shortsToBytes(store: ShortArray): ByteArray {
+        val bytes = ByteArray(store.size * 2)
+        ByteBuffer.wrap(bytes).asShortBuffer().put(store)
+        return bytes
     }
 
     private fun packBits(flags: BooleanArray): ByteArray {

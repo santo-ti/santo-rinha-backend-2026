@@ -3,36 +3,38 @@ package dev.santo.search
 import kotlin.math.sqrt
 
 /**
- * Implicit Vantage-Point Tree over quantized vectors. The [ids] array is
- * reordered so the tree structure is implicit (no per-node objects) — the only
- * per-point overhead is one `Float` threshold, which keeps 3M points affordable.
+ * Implicit Vantage-Point Tree over a CONTIGUOUS slice of the global quantized
+ * store: the bucket's points live at `store[(base + p) * dim]` for local position
+ * `p in [0, count)`, laid out in tree-traversal order. The tree structure is
+ * therefore fully implicit — node `lo` of a `[lo, hi)` range is the vantage point,
+ * its children are `[lo+1, mid)` and `[mid, hi)` — so the only per-point overhead
+ * is one `Float` threshold. No per-point id array is stored (it would be just
+ * `base + p`), which keeps a 3M-point int16 store within the memory budget and
+ * makes traversal reads contiguous (cache-friendly).
  *
  * Search pruning relies on the triangle inequality over the Euclidean metric. A
- * [SearchBudget] caps the distance evaluations: an unlimited budget keeps the
- * search exact (never discards a true nearest neighbor), while a finite one makes
- * it approximate — the traversal visits the closest regions first, so the cap
- * trades a little recall for a hard ceiling on work. A prebuilt tree can be
- * reconstructed from its reordered [ids] and [thresholds] without rebuilding.
+ * [SearchBudget] caps distance evaluations: an unlimited budget keeps the search
+ * exact (never discards a true nearest neighbor); a finite one makes it approximate
+ * (closest regions first), trading a little recall for a hard ceiling on work.
  */
 class VpTree private constructor(
-    private val ids: IntArray, // global point ids, reordered during build
+    private val base: Int, // offset (in points) of this bucket's slice in the global store
+    private val count: Int, // number of points in the bucket
     private val thresholds: FloatArray, // per-node split radius, indexed by node low bound
-    private val store: ByteArray, // global quantized vectors, n*dim
+    private val store: ShortArray, // global quantized vectors, n*dim
     private val labels: BooleanArray, // global fraud labels
     private val dim: Int,
 ) {
-    val size: Int get() = ids.size
-
-    internal fun orderedIds(): IntArray = ids
+    val size: Int get() = count
 
     internal fun thresholds(): FloatArray = thresholds
 
     fun search(queryCodes: IntArray, knn: KNearest, budget: SearchBudget) =
-        searchNode(0, ids.size, queryCodes, knn, budget)
+        searchNode(0, count, queryCodes, knn, budget)
 
     private fun searchNode(lo: Int, hi: Int, queryCodes: IntArray, knn: KNearest, budget: SearchBudget) {
         if (lo >= hi || budget.exhausted()) return
-        val vp = ids[lo]
+        val vp = base + lo
         val d = dist(queryCodes, vp)
         budget.consume()
         knn.offer(d, labels[vp])
@@ -49,56 +51,66 @@ class VpTree private constructor(
         }
     }
 
-    private fun build(lo: Int, hi: Int) {
+    private fun buildNode(lo: Int, hi: Int) {
         if (hi - lo <= 1) return
-        val vp = ids[lo]
         val mid = lo + 1 + (hi - lo - 1) / 2
-        nthElement(lo + 1, hi, mid, vp)
-        thresholds[lo] = dist(vp, ids[mid]).toFloat()
-        build(lo + 1, mid)
-        build(mid, hi)
+        nthElement(lo + 1, hi, mid, base + lo)
+        thresholds[lo] = distPoints(base + lo, base + mid).toFloat()
+        buildNode(lo + 1, mid)
+        buildNode(mid, hi)
     }
 
-    private fun dist(queryCodes: IntArray, pointId: Int): Double =
-        sqrt(squaredDistance(queryCodes, store, pointId * dim, dim).toDouble())
+    private fun dist(queryCodes: IntArray, pointIdx: Int): Double =
+        sqrt(squaredDistance(queryCodes, store, pointIdx * dim, dim).toDouble())
 
-    private fun dist(idA: Int, idB: Int): Double =
+    private fun distPoints(idA: Int, idB: Int): Double =
         sqrt(squaredDistance(store, idA * dim, idB * dim, dim).toDouble())
 
-    /** Partitions `ids[from, to)` by distance to [vp] so that `ids[nth]` is the median. */
+    /** Partitions local range `[from, to)` (store rows `base+from..base+to`) by
+     *  distance to vantage point [vp] so that local position `nth` is the median. */
     private fun nthElement(from: Int, to: Int, nth: Int, vp: Int) {
         var lo = from
         var hi = to - 1
         while (lo < hi) {
-            val pivot = dist(vp, ids[(lo + hi) ushr 1])
+            val pivot = distPoints(vp, base + ((lo + hi) ushr 1))
             var i = lo
             var j = hi
             while (i <= j) {
-                while (dist(vp, ids[i]) < pivot) i++
-                while (dist(vp, ids[j]) > pivot) j--
-                if (i <= j) {
-                    val t = ids[i]; ids[i] = ids[j]; ids[j] = t
-                    i++; j--
-                }
+                while (distPoints(vp, base + i) < pivot) i++
+                while (distPoints(vp, base + j) > pivot) j--
+                if (i <= j) { swapRows(base + i, base + j); i++; j-- }
             }
             if (nth <= j) hi = j else if (nth >= i) lo = i else break
         }
     }
 
+    /** Swaps two store rows (and their labels) in place — the build-time reorder. */
+    private fun swapRows(a: Int, b: Int) {
+        val offA = a * dim
+        val offB = b * dim
+        for (k in 0 until dim) {
+            val t = store[offA + k]; store[offA + k] = store[offB + k]; store[offB + k] = t
+        }
+        val tl = labels[a]; labels[a] = labels[b]; labels[b] = tl
+    }
+
     companion object {
-        fun build(ids: IntArray, store: ByteArray, labels: BooleanArray, dim: Int): VpTree {
-            val tree = VpTree(ids, FloatArray(ids.size), store, labels, dim)
-            tree.build(0, ids.size)
+        /** Builds a tree over `store[base..base+count)`, reordering those rows in
+         *  place into tree-traversal order and computing the node thresholds. */
+        fun build(base: Int, count: Int, store: ShortArray, labels: BooleanArray, dim: Int): VpTree {
+            val tree = VpTree(base, count, FloatArray(count), store, labels, dim)
+            tree.buildNode(0, count)
             return tree
         }
 
-        /** Reconstructs a tree from its already-built order and thresholds (no rebuild). */
+        /** Reconstructs a tree from its already-built slice and thresholds (no rebuild). */
         fun fromPrebuilt(
-            ids: IntArray,
+            base: Int,
+            count: Int,
             thresholds: FloatArray,
-            store: ByteArray,
+            store: ShortArray,
             labels: BooleanArray,
             dim: Int,
-        ): VpTree = VpTree(ids, thresholds, store, labels, dim)
+        ): VpTree = VpTree(base, count, thresholds, store, labels, dim)
     }
 }
