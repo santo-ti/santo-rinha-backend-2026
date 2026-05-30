@@ -30,7 +30,10 @@ const val DEFAULT_NPROBE = 16
  * [offsets] delimiting each cell's slice and [labels] parallel to the points.
  *
  * At `nprobe == k` every cell is scanned, so the result is identical to exact
- * quantized brute force — recall is exact in that limit.
+ * quantized brute force — recall is exact in that limit. The hot path is
+ * zero-allocation: per-thread scratch ([Scratch]) is pooled and reset per query
+ * (safe — a search is synchronous and non-reentrant, with no coroutine suspension
+ * mid-search, and ActiveProcessorCount=1 keeps the CIO worker count tiny).
  */
 class IvfIndex internal constructor(
     internal val centroids: FloatArray, // k*dim, dimension-major: centroids[d*k + c]
@@ -43,13 +46,17 @@ class IvfIndex internal constructor(
 ) : VectorIndex {
 
     private val probeCount = nprobe.coerceIn(1, k)
+    private val scratch = ThreadLocal.withInitial { Scratch(dim, probeCount, K_NEIGHBORS) }
 
     override fun nearestFraudCount(query: DoubleArray): Int {
-        val codes = IntArray(dim) { quantizeToLogicalCode(query[it]) }
-        val probes = nearestCells(codes, probeCount)
-        val knn = KNearest(K_NEIGHBORS)
-        for (pi in probes.indices) {
-            val cell = probes[pi]
+        val s = scratch.get()
+        val codes = s.codes
+        for (d in 0 until dim) codes[d] = quantizeToLogicalCode(query[d])
+
+        selectCells(codes, probeCount, s.cellDist, s.cell)
+        val knn = s.knn.also { it.reset() }
+        for (pi in 0 until probeCount) {
+            val cell = s.cell[pi]
             val end = offsets[cell + 1]
             var p = offsets[cell]
             while (p < end) {
@@ -64,17 +71,26 @@ class IvfIndex internal constructor(
     fun reprobe(nprobe: Int): IvfIndex = IvfIndex(centroids, offsets, store, labels, dim, k, nprobe)
 
     /** The cells this index would probe for [query], for offline cost measurement. */
-    internal fun nearestCellsForCalibration(query: DoubleArray): IntArray =
-        nearestCells(IntArray(dim) { quantizeToLogicalCode(query[it]) }, probeCount)
+    internal fun nearestCellsForCalibration(query: DoubleArray): IntArray {
+        val codes = IntArray(dim) { quantizeToLogicalCode(query[it]) }
+        val outDist = DoubleArray(probeCount)
+        val outCell = IntArray(probeCount)
+        selectCells(codes, probeCount, outDist, outCell)
+        return outCell
+    }
 
     /**
-     * The [count] cells whose centroid is closest to the query, nearest first.
-     * Distance is computed in float against the (fractional) centroid means; the
-     * per-cell point scan then uses exact integer codes.
+     * Fills [outCell] with the [count] cells whose centroid is closest to the query
+     * (nearest first) and [outDist] with their squared distances. Distance is in
+     * float against the (fractional) centroid means; the per-cell point scan then
+     * uses exact integer codes. Both outputs are caller-provided so the hot path can
+     * pool them.
      */
-    private fun nearestCells(codes: IntArray, count: Int): IntArray {
-        val bestDist = DoubleArray(count) { Double.MAX_VALUE }
-        val bestCell = IntArray(count)
+    private fun selectCells(codes: IntArray, count: Int, outDist: DoubleArray, outCell: IntArray) {
+        for (i in 0 until count) {
+            outDist[i] = Double.MAX_VALUE
+            outCell[i] = 0
+        }
         for (c in 0 until k) {
             var sum = 0.0
             var idx = c // dimension-major: centroids[d*k + c]
@@ -83,16 +99,23 @@ class IvfIndex internal constructor(
                 sum += diff * diff
                 idx += k
             }
-            if (sum >= bestDist[count - 1]) continue
+            if (sum >= outDist[count - 1]) continue
             var i = count - 1
-            while (i > 0 && bestDist[i - 1] > sum) {
-                bestDist[i] = bestDist[i - 1]
-                bestCell[i] = bestCell[i - 1]
+            while (i > 0 && outDist[i - 1] > sum) {
+                outDist[i] = outDist[i - 1]
+                outCell[i] = outCell[i - 1]
                 i--
             }
-            bestDist[i] = sum
-            bestCell[i] = c
+            outDist[i] = sum
+            outCell[i] = c
         }
-        return bestCell
+    }
+
+    /** Per-thread reusable scratch — keeps the search hot path allocation-free. */
+    private class Scratch(dim: Int, probeCount: Int, k: Int) {
+        val codes = IntArray(dim)
+        val cellDist = DoubleArray(probeCount)
+        val cell = IntArray(probeCount)
+        val knn = KNearest(k)
     }
 }

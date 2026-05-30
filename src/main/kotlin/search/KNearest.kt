@@ -32,4 +32,13 @@ class KNearest(private val k: Int) {
         for (i in 0 until k) if (fraud[i]) count++
         return count
     }
+
+    /** Clears the buffer for reuse, so one instance can be pooled across queries. */
+    fun reset() {
+        for (i in 0 until k) {
+            dist[i] = Double.MAX_VALUE
+            fraud[i] = false
+        }
+        filled = 0
+    }
 }
