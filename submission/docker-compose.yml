@@ -6,12 +6,13 @@
 x-api: &api
   image: __IMAGE_REF__
   # Per-query search budget (distance evals). Tunable here WITHOUT rebuilding the
-  # image — the runtime reads $SEARCH_BUDGET (see bootstrap.IndexLoader). Over the
-  # full 3M int16 index, 4096 gives det ~2688 with 0 http_errors and ~130MiB peak
-  # in local k6. Lower to 2048 (det ~2155, less CPU/req) if the real Mac Mini p99
-  # suffers, or raise toward 8192 (→ exact, det ~2819) if it has headroom.
+  # image — the runtime reads $SEARCH_BUDGET (see bootstrap.IndexLoader). With the
+  # best-first search over the full 3M int16 index, 32768 reaches exact-quality
+  # detection (E=0 vs the official oracle on randomized-date payloads) at ~13k mean
+  # distance evals. Drop to 16384 (E≈1, ~9.5k evals) if the real Mac Mini p99 or
+  # RSS needs more headroom; 8192 (E≈8) is the conservative floor.
   environment:
-    SEARCH_BUDGET: "4096"
+    SEARCH_BUDGET: "32768"
   networks:
     - rinha
   deploy:

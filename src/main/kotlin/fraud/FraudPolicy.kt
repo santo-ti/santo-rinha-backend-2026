@@ -16,17 +16,22 @@ const val FRAUD_THRESHOLD = 0.6
  * overridable at runtime via the `SEARCH_BUDGET` env var so the budget can be
  * tuned against the contest hardware without rebuilding the native image.
  *
- * Calibrated over the FULL 3M int16 index (offline `tools.SampleSweepKt` + a local
- * k6 run under the real 0.425-CPU / 160MiB limits). Three levers stack:
- *   1. Index all 3M (vs the old 100k sample) — recall is no longer the gap.
- *   2. int16 store — quantization no longer flips borderline decisions.
- *   3. Bucket+tree cache-local layout — search reads stay local despite 84MB store.
- * int16 det@54100 by budget: 2048→2155, 4096→2688, exact→2819. Local k6 at budget
- * 4096: p99 ~43ms (host-contended; real Mac Mini differs), 0 http_errors, mem peak
- * 130/160MiB, final ~4049. det is hardware-independent, so 4096 is the start;
- * calibrate (2048↔8192) against the real p99 via the env var without rebuilding.
+ * Calibrated against the OFFICIAL oracle (a faithful replay of the contest's
+ * `data-generator` over the full 3M int16 index, randomized-date payloads — the
+ * mode the contest uses). With the best-first search (see [dev.santo.search]),
+ * weighted detection error E=1·FP+3·FN by budget on a 10k randomized sample:
+ * 4096→33, 8192→8, 16384→1, 32768→0 (exact-quality), with mean distance evals
+ * 3.3k / 6.2k / 9.5k / 13k respectively (exact would need ~50k). 32768 reaches
+ * the exact decision while staying far under brute force; drop to 16384 via the
+ * env var if the real Mac Mini p99 or RSS needs more headroom.
+ *
+ * NOTE: the earlier depth-first search truncated badly on randomized-date queries
+ * (dim5 saturates in a region the references barely populate → flat metric → weak
+ * pruning), which is what capped contest #7265 at detection_score 453. Best-first
+ * branch-and-bound finds the true neighbors first, so the same budget now yields
+ * exact-quality detection.
  */
-const val SEARCH_BUDGET = 4096
+const val SEARCH_BUDGET = 32768
 
 /** Fraction of fraud labels among the [K_NEIGHBORS] nearest neighbors. */
 fun fraudScore(fraudNeighbors: Int): Double = fraudNeighbors.toDouble() / K_NEIGHBORS
