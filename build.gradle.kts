@@ -54,6 +54,16 @@ tasks.register<JavaExec>("ivfCalibrate") {
     (project.findProperty("args") as String?)?.let { args = it.trim().split(" ") }
 }
 
+// Offline measurement of the int16 quantization floor vs the float gabarito (never shipped).
+tasks.register<JavaExec>("quantFloor") {
+    group = "verification"
+    description = "Measure the int16 exact 5-NN floor vs the float gabarito — is zero error reachable?"
+    mainClass.set("dev.santo.tools.QuantFloorKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    maxHeapSize = "10g"
+    (project.findProperty("args") as String?)?.let { args = it.trim().split(" ") }
+}
+
 // Quick local smoke: build a small IVF2 artifact from the example refs (never shipped).
 tasks.register<JavaExec>("buildSmoke") {
     group = "verification"

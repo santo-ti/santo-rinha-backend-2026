@@ -12,7 +12,12 @@ import dev.santo.vectorization.NO_HISTORY_SENTINEL
  * ~68 borderline k-NN decisions over the 54100 official queries vs the float
  * oracle, while int16 flips zero — lifting the detection ceiling to ~exact.
  */
-const val QUANT_SCALE = 32766
+// 16000 (not 32766): keeps the largest squared diff (sentinel→max = 2·scale, so
+// (2·16000)² = 1.024e9) inside int32, so a SIMD distance can square in fast 32-bit
+// lanes and only widen to int64 for the accumulation (the champion's trick). 32766
+// overflowed int32 per term, forcing slow 64-bit squares. Detection floor stays 0
+// at 16000 (verified by tools.QuantFloor) — granularity is still far finer than needed.
+const val QUANT_SCALE = 16000
 private const val SENTINEL_CODE = -QUANT_SCALE // -1.0 maps here
 
 /** Quantizes one dimension to a signed short; `-1.0` becomes the reserved sentinel. */
