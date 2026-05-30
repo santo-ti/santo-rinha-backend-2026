@@ -29,6 +29,13 @@ class BucketedVpTreeIndex internal constructor(
     private val searchBudget: Int = Int.MAX_VALUE,
 ) : VectorIndex {
 
+    // Per-thread scratch reused across queries so the search hot path allocates
+    // nothing: the CIO worker count is tiny (1 under -R:ActiveProcessorCount=1),
+    // and each query is a synchronous, non-reentrant call on its thread.
+    private val queryCodesPool = ThreadLocal.withInitial { IntArray(dim) }
+    private val knnPool = ThreadLocal.withInitial { KNearest(K_NEIGHBORS) }
+    private val frontierPool = ThreadLocal.withInitial { FrontierHeap(2 * BUCKET_COUNT) }
+
     internal fun bucket(signature: Int): VpTree? = buckets[signature]
 
     override fun nearestFraudCount(query: DoubleArray): Int =
@@ -41,15 +48,15 @@ class BucketedVpTreeIndex internal constructor(
      * for a hard latency ceiling.
      */
     internal fun nearestFraudCount(query: DoubleArray, budget: SearchBudget): Int {
-        val queryCodes = IntArray(dim) { quantizeToLogicalCode(query[it]) }
+        val queryCodes = queryCodesPool.get()
+        for (i in 0 until dim) queryCodes[i] = quantizeToLogicalCode(query[i])
         val sig = signatureOf(query)
-        val knn = KNearest(K_NEIGHBORS)
+        val knn = knnPool.get().also { it.reset() }
 
         // Frontier of subtrees ordered by their lower-bound distance to the query.
         // Each entry packs (bucket, lo, hi) into a Long alongside a parallel lb key,
-        // so the hot path allocates two primitive arrays per query, not one object
-        // per visited node.
-        val frontier = FrontierHeap(2 * BUCKET_COUNT)
+        // so the search visits nodes through a primitive heap with no per-node object.
+        val frontier = frontierPool.get().also { it.reset() }
         for (b in buckets.indices) {
             val tree = buckets[b] ?: continue
             val lb = if (b == sig) 0.0 else sqrt(categoricalLowerBoundSquared(sig, b).toDouble())
@@ -131,6 +138,11 @@ private class FrontierHeap(initialCapacity: Int) {
 
     fun isNotEmpty(): Boolean = n > 0
     fun minKey(): Double = keys[0]
+
+    /** Empties the heap so a pooled instance can be reused (keeps the grown arrays). */
+    fun reset() {
+        n = 0
+    }
 
     fun push(key: Double, value: Long) {
         if (n == keys.size) {

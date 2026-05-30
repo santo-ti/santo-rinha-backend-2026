@@ -30,10 +30,13 @@ class QuantizedBruteForceIndex(
     }
 
     override fun nearestFraudCount(query: DoubleArray): Int {
+        // Logical codes, exactly as the production search does (the stored Short is
+        // its own code), so any divergence is the index structure, not quantization.
         val qz = quantizeVector(query)
+        val codes = IntArray(dim) { qz[it].toInt() }
         val knn = KNearest(K_NEIGHBORS)
         for (i in labels.indices) {
-            knn.offer(sqrt(squaredDistance(qz, store, i * dim, dim).toDouble()), labels[i])
+            knn.offer(sqrt(squaredDistance(codes, store, i * dim, dim).toDouble()), labels[i])
         }
         return knn.fraudCount()
     }

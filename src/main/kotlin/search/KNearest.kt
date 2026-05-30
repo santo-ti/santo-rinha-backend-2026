@@ -9,6 +9,15 @@ class KNearest(private val k: Int) {
     private val fraud = BooleanArray(k)
     private var filled = 0
 
+    /** Resets the buffer so a pooled instance can be reused for the next query. */
+    fun reset() {
+        for (i in 0 until k) {
+            dist[i] = Double.MAX_VALUE
+            fraud[i] = false
+        }
+        filled = 0
+    }
+
     /** k-th smallest distance so far, or `+inf` until [k] items have been offered. */
     fun worst(): Double = dist[k - 1]
 

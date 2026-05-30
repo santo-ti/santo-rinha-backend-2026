@@ -14,7 +14,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * Validates the chosen design (bucketing + VP-Tree int8) against the brute-force
+ * Validates the chosen design (bucketing + VP-Tree int16) against the brute-force
  * oracles on the example dataset (tasks 1.3, 1.4 and 1.6).
  */
 class VectorIndexValidationTest {
@@ -49,7 +49,7 @@ class VectorIndexValidationTest {
     }
 
     @Test
-    fun `int8 quantization preserves the decision versus the double oracle`() {
+    fun `int16 quantization preserves the decision versus the double oracle`() {
         // Quantization may, in principle, flip a borderline neighbor. Confirm it
         // does not change the approve/deny decision on the example set.
         val qs = queries()

@@ -8,6 +8,9 @@ import dev.santo.dto.Terminal
 import dev.santo.dto.Transaction
 import dev.santo.vectorization.ReferenceResources
 import dev.santo.vectorization.Vectorizer
+import java.time.Duration
+import java.time.Instant
+import java.time.ZoneOffset
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -100,6 +103,48 @@ class VectorizerTest {
         val v = vectorizer.vectorize(request)
         assertEquals(325.0 / 1440.0, v[5], 1e-4)
         assertEquals(18.8626479774 / 1000.0, v[6], 1e-4)
+    }
+
+    @Test
+    fun `fast timestamp path is bit-identical to the Instant-based computation`() {
+        // The integer-arithmetic fast path (dims 3,4,5,6) must reproduce the old
+        // Instant/Duration computation EXACTLY — a 1-bit drift would shift a
+        // quantized code and could flip a k-NN decision. Sweep years (incl. leap
+        // 2024/2028), every month, edge days/hours, and last_transaction offsets.
+        val years = intArrayOf(2024, 2025, 2026, 2028, 2030, 2031)
+        val days = intArrayOf(1, 15, 28)
+        val hours = intArrayOf(0, 7, 12, 23)
+        val offsetsSeconds = longArrayOf(60, 325 * 60, 3600, 86400, 86400L * 400, 86400L * 3650)
+        var checked = 0
+        for (y in years) for (mo in 1..12) for (d in days) for (h in hours) {
+            val reqTs = "%04d-%02d-%02dT%02d:%02d:%02dZ".format(y, mo, d, h, 30, 15)
+            val req = Instant.parse(reqTs).atZone(ZoneOffset.UTC)
+
+            val vNull = vectorizer.vectorize(baseRequest().copy(
+                transaction = Transaction(41.12, 2, reqTs), lastTransaction = null,
+            ))
+            assertEquals(req.hour / 23.0, vNull[3])
+            assertEquals((req.dayOfWeek.value - 1) / 6.0, vNull[4])
+            assertEquals(-1.0, vNull[5])
+            assertEquals(-1.0, vNull[6])
+            checked++
+
+            for (off in offsetsSeconds) {
+                val lastTs = Instant.ofEpochSecond(req.toInstant().epochSecond - off).toString()
+                val v = vectorizer.vectorize(baseRequest().copy(
+                    transaction = Transaction(41.12, 2, reqTs),
+                    lastTransaction = LastTransaction(timestamp = lastTs, kmFromCurrent = 12.5),
+                ))
+                val expectedMinutes =
+                    Duration.between(Instant.parse(lastTs), req.toInstant()).seconds / 60.0
+                assertEquals(req.hour / 23.0, v[3])
+                assertEquals((req.dayOfWeek.value - 1) / 6.0, v[4])
+                assertEquals((expectedMinutes / 1440.0).coerceIn(0.0, 1.0), v[5])
+                assertEquals((12.5 / 1000.0).coerceIn(0.0, 1.0), v[6])
+                checked++
+            }
+        }
+        assertEquals(6 * 12 * 3 * 4 * 7, checked, "sweep coverage")
     }
 
     private fun baseRequest() = FraudScoreRequest(
