@@ -5,21 +5,21 @@
 # .github/workflows/publish-submission.yml when it materializes the branch.
 x-api: &api
   image: __IMAGE_REF__
-  # Per-query search budget (distance evals). Tunable here WITHOUT rebuilding the
-  # image — the runtime reads $SEARCH_BUDGET (see bootstrap.IndexLoader). With the
-  # best-first search over the full 3M int16 index: 4096→det E33, 8192→E8,
-  # 16384→E1. CEILING (contest #7354): 32768 (~13k evals/query) saturated the
-  # 0.425-CPU Mac Mini → −6000, even with perfect detection. 4096 (~3.3k evals,
-  # #7265's proven-safe level) is the safe-but-strong start; bump to 8192 only
-  # after a real p99 confirms headroom.
+  # Per-query search budget (distance evals) for the DEPTH-FIRST VP-tree search.
+  # Tunable here WITHOUT rebuilding the image — the runtime reads $SEARCH_BUDGET
+  # (see bootstrap.IndexLoader). best-first was abandoned: its priority-queue
+  # overhead pushed p99 to 2001ms (#7359 cut) / 378ms (#7363). DFS is O(1)/node
+  # (no heap), so #7265 ran budget 4096 at p99 17ms — it affords a much higher
+  # budget. DFS detection knee: 16384 (weighted E29 on a 10k randomized sample,
+  # vs E123 at 8192). Drop to 8192 if the real Mac Mini p99 saturates.
   environment:
-    SEARCH_BUDGET: "4096"
+    SEARCH_BUDGET: "16384"
   networks:
     - rinha
   deploy:
     resources:
       limits:
-        cpus: "0.425"
+        cpus: "0.45"
         memory: "160MB"
 
 services:
@@ -43,7 +43,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.15"
+          cpus: "0.10"
           memory: "30MB"
 
 networks:

@@ -27,16 +27,29 @@ class VpTree private constructor(
 ) {
     val size: Int get() = count
 
-    internal val storeBase: Int get() = base
-    internal val nodeCount: Int get() = count
     internal fun thresholds(): FloatArray = thresholds
-    internal fun thresholdAt(lo: Int): Float = thresholds[lo]
 
-    /** Distance from the query to the vantage point of the node at local [lo]. */
-    internal fun distAt(queryCodes: IntArray, lo: Int): Double = dist(queryCodes, base + lo)
+    fun search(queryCodes: IntArray, knn: KNearest, budget: SearchBudget) =
+        searchNode(0, count, queryCodes, knn, budget)
 
-    /** Fraud label of the vantage point of the node at local [lo]. */
-    internal fun labelAt(lo: Int): Boolean = labels[base + lo]
+    private fun searchNode(lo: Int, hi: Int, queryCodes: IntArray, knn: KNearest, budget: SearchBudget) {
+        if (lo >= hi || budget.exhausted()) return
+        val vp = base + lo
+        val d = dist(queryCodes, vp)
+        budget.consume()
+        knn.offer(d, labels[vp])
+        if (hi - lo == 1) return
+
+        val mid = lo + 1 + (hi - lo - 1) / 2
+        val tau = thresholds[lo]
+        if (d < tau) {
+            searchNode(lo + 1, mid, queryCodes, knn, budget)
+            if (d + knn.worst() >= tau) searchNode(mid, hi, queryCodes, knn, budget)
+        } else {
+            searchNode(mid, hi, queryCodes, knn, budget)
+            if (d - knn.worst() <= tau) searchNode(lo + 1, mid, queryCodes, knn, budget)
+        }
+    }
 
     private fun buildNode(lo: Int, hi: Int) {
         if (hi - lo <= 1) return
