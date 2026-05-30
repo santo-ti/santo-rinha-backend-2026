@@ -43,6 +43,17 @@ configurations.matching {
     exclude(group = "org.jetbrains.kotlin", module = "kotlin-reflect")
 }
 
+// Offline IVF recall/cost calibration over the 3M references (never shipped).
+// Run: ./gradlew ivfCalibrate -Pargs="build/refs-3m.json.gz 8000 4096 16"
+tasks.register<JavaExec>("ivfCalibrate") {
+    group = "verification"
+    description = "Offline IVF recall/cost calibration over the reference dataset."
+    mainClass.set("dev.santo.tools.IvfCalibrateKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    maxHeapSize = "10g"
+    (project.findProperty("args") as String?)?.let { args = it.trim().split(" ") }
+}
+
 graalvmNative {
     binaries.named("main") {
         imageName.set("rinha-server")

@@ -5,15 +5,15 @@
 # .github/workflows/publish-submission.yml when it materializes the branch.
 x-api: &api
   image: __IMAGE_REF__
-  # Per-query search budget (distance evals) for the DEPTH-FIRST VP-tree search.
-  # Tunable here WITHOUT rebuilding the image — the runtime reads $SEARCH_BUDGET
-  # (see bootstrap.IndexLoader). best-first was abandoned: its priority-queue
-  # overhead pushed p99 to 2001ms (#7359 cut) / 378ms (#7363). DFS is O(1)/node
-  # (no heap), so #7265 ran budget 4096 at p99 17ms — it affords a much higher
-  # budget. DFS detection knee: 16384 (weighted E29 on a 10k randomized sample,
-  # vs E123 at 8192). Drop to 8192 if the real Mac Mini p99 saturates.
+  # Cells probed per query for the IVF search. Tunable here WITHOUT rebuilding the
+  # image — the runtime reads $NPROBE (see bootstrap.IndexLoader). Calibrated offline
+  # over the 3M refs with randomized-date queries (tools.IvfCalibrate, k=4096): recall
+  # stops improving past ~16 probes (the residual error is the int16 quantization
+  # floor, not truncation), so 16 buys exact-quality detection at the lowest scan
+  # cost. Raise toward 24/32 only if a real preview shows p99 headroom AND missing
+  # recall; lower to 8 (det still ~2090) if CPU saturates.
   environment:
-    SEARCH_BUDGET: "16384"
+    NPROBE: "16"
   networks:
     - rinha
   deploy:

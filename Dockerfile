@@ -17,13 +17,13 @@ COPY src ./src
 
 # JVM fat jar (used for the index builder tool and the agent run), then the index.
 RUN ./gradlew --no-daemon buildFatJar
-# Build the index over the FULL 3M reference set (INDEX_MAX_SIZE caps it only if
-# set below 3M). Measured: the bucketed VP-Tree + categorical pruning serves an
-# exact search in ~1800 distance evals over 3M, so the full index fits the
-# 0.425-CPU budget; the per-query SEARCH_BUDGET (env-tunable) bounds the tail.
-# Indexing all 3M instead of the old 100k sample recovers detection accuracy —
-# det≈1585+ vs ~222 — the dominant score lever. The ~63MB artifact loads into
-# ~71MB of heap, within the 120MB MaxHeapSize / 160MB instance budget.
+# Build the IVF index over the FULL 3M reference set (INDEX_MAX_SIZE caps it only
+# if set below 3M; IVF_K / IVF_ITERS tune the k-means granularity). IVF partitions
+# the 3M into k=4096 cells; a query scans only its nearest $NPROBE cells (env-tunable
+# at runtime). Calibrated offline (tools.IvfCalibrate) over randomized-date queries:
+# nprobe=16 reaches the int16 quantization floor (~0 detection error) at ~16k scans,
+# unlike the old VP-tree which degenerated to near-brute-force on the dim5-saturated
+# tail. The ~81MB artifact loads into ~85MB of heap, within the 120MB MaxHeapSize.
 ARG INDEX_MAX_SIZE=3000000
 # -Xmx5g: parsing+building the 3M index peaks ~1.5GB; 5g is safe on a 7GB CI runner
 # and leaves headroom for the heavier nativeCompile step that follows.
