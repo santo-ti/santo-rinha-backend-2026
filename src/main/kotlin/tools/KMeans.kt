@@ -16,7 +16,10 @@ object KMeans {
 
     /**
      * @param store flat `n*dim` int16 logical codes (the same layout the index uses).
-     * @param centroids output is dimension-major (`centroids[d*k + c]`) to match [dev.santo.search.IvfIndex].
+     * @param centroids output is centroid-major (`centroids[c*dim + d]`) — each centroid's
+     *   dims are contiguous, so [dev.santo.search.IvfIndex]'s scalar per-centroid scan
+     *   streams sequentially through cache instead of striding by k (the cache-hostile
+     *   dim-major layout caused the #7422 saturation: p99 1585ms).
      */
     fun cluster(
         store: ShortArray,
@@ -45,7 +48,8 @@ object KMeans {
             if (changed == 0 && iter > 0) break
         }
 
-        return Result(toDimensionMajor(cent, k, dim), assignment, k, dim)
+        // cent is already centroid-major (cent[c*dim+d]) — exactly the layout the search wants.
+        return Result(cent, assignment, k, dim)
     }
 
     /** Parallel nearest-centroid assignment; returns how many points changed cell. */
@@ -104,12 +108,5 @@ object KMeans {
         val picked = HashSet<Int>(k * 2)
         while (picked.size < k) picked.add(rng.nextInt(n))
         return picked.toIntArray()
-    }
-
-    /** centroid-major (`cent[c*dim+d]`) -> dimension-major (`out[d*k+c]`). */
-    private fun toDimensionMajor(cent: FloatArray, k: Int, dim: Int): FloatArray {
-        val out = FloatArray(k * dim)
-        for (c in 0 until k) for (d in 0 until dim) out[d * k + c] = cent[c * dim + d]
-        return out
     }
 }

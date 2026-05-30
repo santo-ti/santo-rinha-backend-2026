@@ -11,7 +11,7 @@ import java.nio.ByteBuffer
  * build. The reading half lives in `search.IvfReader`; both share [IVF_MAGIC] as
  * the layout's single source of truth.
  *
- * Layout: magic, dim, k, n, centroids (`k*dim` floats, dimension-major, big-endian),
+ * Layout: magic, dim, k, n, centroids (`k*dim` floats, centroid-major, big-endian),
  * offsets (`k+1` ints), int16 store (`n*dim` shorts, big-endian), packed label bitset.
  */
 object IvfWriter {

@@ -23,8 +23,9 @@ const val DEFAULT_NPROBE = 16
  * refs → flat distance landscape → VP pruning collapses). That degeneracy was the
  * detection↔CPU wall; IVF removes it, giving exact-quality recall cheaply.
  *
- * Layout: [centroids] are dimension-major (`centroids[d*k + c]`) so the
- * query-to-all-centroids pass reads each dimension's column contiguously. Points
+ * Layout: [centroids] are centroid-major (`centroids[c*dim + d]`) so the scalar
+ * per-centroid scan streams each centroid's 14 dims contiguously through cache
+ * (the dim-major layout strided by k and caused the #7422 saturation). Points
  * are grouped by cell, contiguous in [store] (int16 logical codes, the int16
  * scheme reserves a negative sentinel so the stored Short IS its own code), with
  * [offsets] delimiting each cell's slice and [labels] parallel to the points.
@@ -93,11 +94,11 @@ class IvfIndex internal constructor(
         }
         for (c in 0 until k) {
             var sum = 0.0
-            var idx = c // dimension-major: centroids[d*k + c]
+            var idx = c * dim // centroid-major: centroids[c*dim + d], 14 dims contiguous
             for (d in 0 until dim) {
                 val diff = codes[d] - centroids[idx]
                 sum += diff * diff
-                idx += k
+                idx++
             }
             if (sum >= outDist[count - 1]) continue
             var i = count - 1

@@ -10,7 +10,7 @@ import java.nio.ByteBuffer
  * writing half lives in `tools.IvfWriter`; both share [IVF_MAGIC] as the layout's
  * single source of truth.
  *
- * Layout: magic, dim, k, n, centroids (`k*dim` floats, dimension-major, big-endian),
+ * Layout: magic, dim, k, n, centroids (`k*dim` floats, centroid-major, big-endian),
  * offsets (`k+1` ints), int16 store (`n*dim` shorts, big-endian, chunked), packed
  * label bitset.
  */
