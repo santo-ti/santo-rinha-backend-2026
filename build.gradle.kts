@@ -54,6 +54,26 @@ tasks.register<JavaExec>("ivfCalibrate") {
     (project.findProperty("args") as String?)?.let { args = it.trim().split(" ") }
 }
 
+// Quick local smoke: build a small IVF2 artifact from the example refs (never shipped).
+tasks.register<JavaExec>("buildSmoke") {
+    group = "verification"
+    description = "Build a tiny IVF2 index from example references for a local server smoke test."
+    mainClass.set("dev.santo.tools.BuildIndexKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    environment("IVF_K", "64")
+    args = listOf("src/test/resources/example-references.json", "build/smoke.bin")
+}
+
+// Offline measurement of two-level (district→cell) IVF routing (never shipped).
+tasks.register<JavaExec>("ivfTwoLevel") {
+    group = "verification"
+    description = "Measure two-level IVF routing comps + recall over the reference dataset."
+    mainClass.set("dev.santo.tools.IvfTwoLevelKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    maxHeapSize = "10g"
+    (project.findProperty("args") as String?)?.let { args = it.trim().split(" ") }
+}
+
 graalvmNative {
     binaries.named("main") {
         imageName.set("rinha-server")

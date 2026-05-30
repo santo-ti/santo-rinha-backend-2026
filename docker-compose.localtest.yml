@@ -7,7 +7,8 @@ services:
   api-1:
     image: rinha:3m-int16
     environment:
-      NPROBE: "${NPROBE:-16}"
+      NPROBE1: "${NPROBE1:-4}"
+      NPROBE2: "${NPROBE2:-6}"
     mem_limit: 160m
     memswap_limit: 160m
     cpus: 0.425
@@ -15,7 +16,8 @@ services:
   api-2:
     image: rinha:3m-int16
     environment:
-      NPROBE: "${NPROBE:-16}"
+      NPROBE1: "${NPROBE1:-4}"
+      NPROBE2: "${NPROBE2:-6}"
     mem_limit: 160m
     memswap_limit: 160m
     cpus: 0.425

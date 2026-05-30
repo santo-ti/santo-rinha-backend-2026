@@ -5,38 +5,36 @@ import java.io.InputStream
 import java.nio.ByteBuffer
 
 /**
- * Reads a prebuilt [IvfIndex] from the binary artifact built offline (image build).
- * Loaded as-is at startup; the runtime never parses JSON nor runs k-means. The
- * writing half lives in `tools.IvfWriter`; both share [IVF_MAGIC] as the layout's
- * single source of truth.
+ * Reads a prebuilt two-level [IvfIndex] from the binary artifact built offline
+ * (image build). Loaded as-is at startup; the runtime never parses JSON nor runs
+ * k-means. The writing half lives in `tools.IvfWriter`; both share [IVF_MAGIC] as
+ * the layout's single source of truth.
  *
  * Layout: magic, dim, k, n, centroids (`k*dim` floats, centroid-major, big-endian),
  * offsets (`k+1` ints), int16 store (`n*dim` shorts, big-endian, chunked), packed
- * label bitset.
+ * label bitset, k1, metaCentroids (`k1*dim` floats), metaOfCell (`k` ints).
  */
 object IvfReader {
 
-    fun readFrom(input: InputStream, nprobe: Int = DEFAULT_NPROBE): IvfIndex {
+    fun readFrom(input: InputStream, nprobe1: Int = DEFAULT_NPROBE1, nprobe2: Int = DEFAULT_NPROBE2): IvfIndex {
         val inp = DataInputStream(input)
         require(inp.readInt() == IVF_MAGIC) { "Bad IVF artifact: magic mismatch" }
         val dim = inp.readInt()
         val k = inp.readInt()
         val n = inp.readInt()
 
-        val centroids = FloatArray(k * dim)
-        readFloatsInto(inp, centroids)
-
+        val centroids = FloatArray(k * dim) { inp.readFloat() }
         val offsets = IntArray(k + 1) { inp.readInt() }
 
         val store = ShortArray(n * dim)
         readShortsInto(inp, store)
         val labels = unpackBits(readExactly(inp, (n + 7) / 8), n)
 
-        return IvfIndex(centroids, offsets, store, labels, dim, k, nprobe)
-    }
+        val k1 = inp.readInt()
+        val metaCentroids = FloatArray(k1 * dim) { inp.readFloat() }
+        val metaOfCell = IntArray(k) { inp.readInt() }
 
-    private fun readFloatsInto(inp: DataInputStream, dst: FloatArray) {
-        for (i in dst.indices) dst[i] = inp.readFloat()
+        return IvfIndex(centroids, offsets, store, labels, dim, k, metaCentroids, k1, metaOfCell, nprobe1, nprobe2)
     }
 
     /** Reads big-endian shorts into [dst] in 64KB chunks (no second full-size buffer). */

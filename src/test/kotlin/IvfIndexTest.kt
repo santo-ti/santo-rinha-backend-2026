@@ -35,7 +35,9 @@ class IvfIndexTest {
     private val doubleOracle = BruteForceIndex(references)
 
     private val k = minOf(16, references.size)
-    private val exact = IvfBuilder.build(references, k = k, nprobe = k)
+    // metaCells=k (every cell its own district) + nprobe1=k + nprobe2=k scans every
+    // cell, so the two-level routing degenerates to exact quantized brute force.
+    private val exact = IvfBuilder.build(references, k = k, metaCells = k, nprobe1 = k, nprobe2 = k)
 
     private fun queries(): List<DoubleArray> {
         val fromReferences = references.map { it.vector }
@@ -64,7 +66,7 @@ class IvfIndexTest {
     @Test
     fun `IVF survives a binary round trip unchanged`() {
         val bytes = ByteArrayOutputStream().also { IvfWriter.writeTo(exact, it) }.toByteArray()
-        val restored = ByteArrayInputStream(bytes).use { IvfReader.readFrom(it, nprobe = k) }
+        val restored = ByteArrayInputStream(bytes).use { IvfReader.readFrom(it, nprobe1 = k, nprobe2 = k) }
         for (q in queries()) {
             assertEquals(exact.nearestFraudCount(q), restored.nearestFraudCount(q), "round-trip diverged")
         }

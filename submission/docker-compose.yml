@@ -5,15 +5,16 @@
 # .github/workflows/publish-submission.yml when it materializes the branch.
 x-api: &api
   image: __IMAGE_REF__
-  # Cells probed per query for the IVF search. Tunable here WITHOUT rebuilding the
-  # image — the runtime reads $NPROBE (see bootstrap.IndexLoader). Calibrated offline
-  # over the 3M refs with randomized-date queries (tools.IvfCalibrate, k=4096): recall
-  # stops improving past ~16 probes (the residual error is the int16 quantization
-  # floor, not truncation), so 16 buys exact-quality detection at the lowest scan
-  # cost. Raise toward 24/32 only if a real preview shows p99 headroom AND missing
-  # recall; lower to 8 (det still ~2090) if CPU saturates.
+  # Two-level IVF routing: $NPROBE1 districts → $NPROBE2 cells per query. Tunable
+  # here WITHOUT rebuilding the image (runtime reads them — see bootstrap.IndexLoader).
+  # Calibrated offline over the 3M refs with randomized-date queries (tools.IvfTwoLevel,
+  # k=4096, k1=64): NPROBE1=4/NPROBE2=6 ≈ 3.8k comparisons/query (≈0.23ms on the contest
+  # core, well under ~1ms) at detection ~exact (contest E≈81). Flat single-level routing
+  # cost ~16k comps and saturated (#7422/#7428, p99 cut). Lower NPROBE2 (4) if CPU is
+  # tight; raise (8) only if a preview shows p99 headroom AND missing recall.
   environment:
-    NPROBE: "16"
+    NPROBE1: "4"
+    NPROBE2: "6"
   networks:
     - rinha
   deploy:

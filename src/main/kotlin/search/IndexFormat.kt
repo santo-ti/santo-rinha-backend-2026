@@ -9,7 +9,9 @@ package dev.santo.search
 internal const val INDEX_MAGIC = 0x46534932
 
 /**
- * Magic header for the IVF artifact ("IVF1"). Distinct from [INDEX_MAGIC] so a
- * VP-tree artifact and an IVF artifact each fail fast if fed to the wrong reader.
+ * Magic header for the two-level IVF artifact ("IVF2" — district routing; bumped
+ * from "IVF1" single-level so an old artifact fails fast instead of being misread).
+ * Distinct from [INDEX_MAGIC] so a VP-tree artifact and an IVF artifact each fail
+ * fast if fed to the wrong reader.
  */
-internal const val IVF_MAGIC = 0x49564631
+internal const val IVF_MAGIC = 0x49564632

@@ -17,12 +17,13 @@ COPY src ./src
 
 # JVM fat jar (used for the index builder tool and the agent run), then the index.
 RUN ./gradlew --no-daemon buildFatJar
-# Build the IVF index over the FULL 3M reference set (INDEX_MAX_SIZE caps it only
-# if set below 3M; IVF_K / IVF_ITERS tune the k-means granularity). IVF partitions
-# the 3M into k=4096 cells; a query scans only its nearest $NPROBE cells (env-tunable
-# at runtime). Calibrated offline (tools.IvfCalibrate) over randomized-date queries:
-# nprobe=16 reaches the int16 quantization floor (~0 detection error) at ~16k scans,
-# unlike the old VP-tree which degenerated to near-brute-force on the dim5-saturated
+# Build the two-level IVF index over the FULL 3M reference set (INDEX_MAX_SIZE caps
+# it only if set below 3M; IVF_K / IVF_ITERS tune the k-means granularity). IVF
+# partitions the 3M into k=4096 cells, then clusters those into k1=64 districts; a
+# query routes through $NPROBE1 districts → $NPROBE2 cells (env-tunable at runtime).
+# Calibrated offline (tools.IvfTwoLevel): NPROBE1=4/NPROBE2=6 ≈ 3.8k comparisons/query
+# at ~exact detection — vs the flat single-level ~16k that saturated the 0.45 core
+# (#7428, p99 cut), and unlike the old VP-tree which degenerated on the dim5-saturated
 # tail. The ~81MB artifact loads into ~85MB of heap, within the 120MB MaxHeapSize.
 ARG INDEX_MAX_SIZE=3000000
 # -Xmx5g: parsing+building the 3M index peaks ~1.5GB; 5g is safe on a 7GB CI runner

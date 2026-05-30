@@ -7,12 +7,13 @@ import java.io.OutputStream
 import java.nio.ByteBuffer
 
 /**
- * Serializes a prebuilt [IvfIndex] to the binary artifact during the offline image
- * build. The reading half lives in `search.IvfReader`; both share [IVF_MAGIC] as
- * the layout's single source of truth.
+ * Serializes a prebuilt two-level [IvfIndex] to the binary artifact during the
+ * offline image build. The reading half lives in `search.IvfReader`; both share
+ * [IVF_MAGIC] as the layout's single source of truth.
  *
  * Layout: magic, dim, k, n, centroids (`k*dim` floats, centroid-major, big-endian),
- * offsets (`k+1` ints), int16 store (`n*dim` shorts, big-endian), packed label bitset.
+ * offsets (`k+1` ints), int16 store (`n*dim` shorts), packed label bitset, k1,
+ * metaCentroids (`k1*dim` floats), metaOfCell (`k` ints).
  */
 object IvfWriter {
 
@@ -28,6 +29,10 @@ object IvfWriter {
         for (o in index.offsets) out.writeInt(o)
         out.write(shortsToBytes(index.store))
         out.write(packBits(index.labels))
+
+        out.writeInt(index.k1)
+        for (f in index.metaCentroids) out.writeFloat(f)
+        for (m in index.metaOfCell) out.writeInt(m)
         out.flush()
     }
 
