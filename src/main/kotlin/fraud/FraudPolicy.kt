@@ -20,18 +20,19 @@ const val FRAUD_THRESHOLD = 0.6
  * `data-generator` over the full 3M int16 index, randomized-date payloads — the
  * mode the contest uses). With the best-first search (see [dev.santo.search]),
  * weighted detection error E=1·FP+3·FN by budget on a 10k randomized sample:
- * 4096→33, 8192→8, 16384→1, 32768→0 (exact-quality), with mean distance evals
- * 3.3k / 6.2k / 9.5k / 13k respectively (exact would need ~50k). 32768 reaches
- * the exact decision while staying far under brute force; drop to 16384 via the
- * env var if the real Mac Mini p99 or RSS needs more headroom.
+ * 2048→83, 4096→33, 8192→8, 16384→1, 32768→0, with mean distance evals
+ * 1.7k / 3.3k / 6.2k / 9.5k / 13k respectively.
  *
- * NOTE: the earlier depth-first search truncated badly on randomized-date queries
- * (dim5 saturates in a region the references barely populate → flat metric → weak
- * pruning), which is what capped contest #7265 at detection_score 453. Best-first
- * branch-and-bound finds the true neighbors first, so the same budget now yields
- * exact-quality detection.
+ * HARDWARE CEILING (contest #7354, budget 32768): −6000. The Mac Mini's 0.425 CPU
+ * could not sustain ~13k evals/query — p99 hit the 2001ms timeout, 84% errors —
+ * even though detection on the few served requests was PERFECT (FP=0, FN=0). So
+ * the budget is CPU-bound, not detection-bound: keep it near #7265's proven-safe
+ * ~3.3k evals. 4096 is the safe-but-strong point (det E33 ≈ detection_score 1459
+ * vs 453 for the old depth-first search at the same budget). Tune UP via the env
+ * var (8192, 16384) only after a real p99 confirms headroom; the per-query search
+ * scratch is pooled (zero allocation), so the limit now is raw CPU, not GC.
  */
-const val SEARCH_BUDGET = 32768
+const val SEARCH_BUDGET = 4096
 
 /** Fraction of fraud labels among the [K_NEIGHBORS] nearest neighbors. */
 fun fraudScore(fraudNeighbors: Int): Double = fraudNeighbors.toDouble() / K_NEIGHBORS
