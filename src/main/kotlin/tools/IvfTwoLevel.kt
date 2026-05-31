@@ -50,7 +50,7 @@ fun main(args: Array<String>) {
     require(cache.exists()) { "No cached index at ${cache.path}; run ivfCalibrate with k=$k iters=$iters first." }
     println("Loading cached IVF k=$k ...")
     val index = cache.inputStream().buffered().use { IvfReader.readFrom(it) }
-    val n = index.labels.size
+    val n = index.offsets[index.k]
 
     // Per-point radius to its cell centroid (pruning bound), precomputed once.
     val radii = FloatArray(n)
@@ -158,15 +158,17 @@ private fun twoLevelSearch(index: IvfIndex, meta: Meta, query: DoubleArray, np1:
     for (rank in 0 until n2) {
         val cell = ci[rank]; if (cd[rank] == Double.MAX_VALUE) continue
         val dCell = sqrt(cd[rank])
-        var p = index.offsets[cell]; val end = index.offsets[cell + 1]
+        val start = index.offsets[cell]; val end = index.offsets[cell + 1]
+        var p = start
         while (p < end) {
+            val within = p - start
             val full = bestSq[K_NEIGHBORS - 1]
             if (full == Double.MAX_VALUE || abs(dCell - radii[p]) < sqrt(full)) {
                 comps++
-                var s = 0L; val base = p * dim
-                for (d in 0 until dim) { val diff = (codes[d] - index.store[base + d]).toLong(); s += diff * diff }
+                var s = 0L
+                for (d in 0 until dim) { val diff = (codes[d] - index.codeAt(cell, within, d)).toLong(); s += diff * diff }
                 val ds = s.toDouble()
-                if (ds < bestSq[K_NEIGHBORS - 1]) { var i = K_NEIGHBORS - 1; while (i > 0 && bestSq[i - 1] > ds) { bestSq[i] = bestSq[i - 1]; bestFraud[i] = bestFraud[i - 1]; i-- }; bestSq[i] = ds; bestFraud[i] = index.labels[p] }
+                if (ds < bestSq[K_NEIGHBORS - 1]) { var i = K_NEIGHBORS - 1; while (i > 0 && bestSq[i - 1] > ds) { bestSq[i] = bestSq[i - 1]; bestFraud[i] = bestFraud[i - 1]; i-- }; bestSq[i] = ds; bestFraud[i] = index.labelAt(cell, within) }
             }
             p++
         }
@@ -177,10 +179,12 @@ private fun twoLevelSearch(index: IvfIndex, meta: Meta, query: DoubleArray, np1:
 
 private fun fillRadii(index: IvfIndex, c: Int, radii: FloatArray) {
     val dim = index.dim; val cb = c * dim
-    var p = index.offsets[c]; val end = index.offsets[c + 1]
+    val start = index.offsets[c]; val end = index.offsets[c + 1]
+    var p = start
     while (p < end) {
-        var sum = 0.0; val base = p * dim
-        for (d in 0 until dim) { val diff = index.store[base + d] - index.centroids[cb + d]; sum += diff * diff }
+        val within = p - start
+        var sum = 0.0
+        for (d in 0 until dim) { val diff = index.codeAt(c, within, d) - index.centroids[cb + d]; sum += diff * diff }
         radii[p] = sqrt(sum).toFloat(); p++
     }
 }

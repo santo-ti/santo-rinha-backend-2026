@@ -12,23 +12,24 @@ import java.nio.ByteBuffer
  * [IVF_MAGIC] as the layout's single source of truth.
  *
  * Layout: magic, dim, k, n, centroids (`k*dim` floats, centroid-major, big-endian),
- * offsets (`k+1` ints), int16 store (`n*dim` shorts), packed label bitset, k1,
- * metaCentroids (`k1*dim` floats), metaOfCell (`k` ints).
+ * offsets (`k+1` ints, cumulative real counts), blockOffsets (`k+1` ints), SoA-16
+ * block store (`totalBlocks*dim*BLOCK` shorts), packed block-label bitset
+ * (`totalBlocks*BLOCK` bits), k1, metaCentroids (`k1*dim` floats), metaOfCell (`k` ints).
  */
 object IvfWriter {
 
     fun writeTo(index: IvfIndex, output: OutputStream) {
         val out = DataOutputStream(output)
-        val n = index.labels.size
         out.writeInt(IVF_MAGIC)
         out.writeInt(index.dim)
         out.writeInt(index.k)
-        out.writeInt(n)
+        out.writeInt(index.offsets[index.k]) // n (= total real points)
 
         for (f in index.centroids) out.writeFloat(f)
         for (o in index.offsets) out.writeInt(o)
-        out.write(shortsToBytes(index.store))
-        out.write(packBits(index.labels))
+        for (b in index.blockOffsets) out.writeInt(b)
+        out.write(shortsToBytes(index.blocks))
+        out.write(packBits(index.blockLabels))
 
         out.writeInt(index.k1)
         for (f in index.metaCentroids) out.writeFloat(f)

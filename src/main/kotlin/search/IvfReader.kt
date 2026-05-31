@@ -11,8 +11,9 @@ import java.nio.ByteBuffer
  * the layout's single source of truth.
  *
  * Layout: magic, dim, k, n, centroids (`k*dim` floats, centroid-major, big-endian),
- * offsets (`k+1` ints), int16 store (`n*dim` shorts, big-endian, chunked), packed
- * label bitset, k1, metaCentroids (`k1*dim` floats), metaOfCell (`k` ints).
+ * offsets (`k+1` ints, cumulative real counts), blockOffsets (`k+1` ints), SoA-16
+ * block store (`totalBlocks*dim*BLOCK` shorts, chunked), packed block-label bitset
+ * (`totalBlocks*BLOCK` bits), k1, metaCentroids (`k1*dim` floats), metaOfCell (`k` ints).
  */
 object IvfReader {
 
@@ -21,20 +22,24 @@ object IvfReader {
         require(inp.readInt() == IVF_MAGIC) { "Bad IVF artifact: magic mismatch" }
         val dim = inp.readInt()
         val k = inp.readInt()
-        val n = inp.readInt()
+        inp.readInt() // n (= offsets[k]); kept in the header for inspection
 
         val centroids = FloatArray(k * dim) { inp.readFloat() }
         val offsets = IntArray(k + 1) { inp.readInt() }
+        val blockOffsets = IntArray(k + 1) { inp.readInt() }
 
-        val store = ShortArray(n * dim)
-        readShortsInto(inp, store)
-        val labels = unpackBits(readExactly(inp, (n + 7) / 8), n)
+        val block = BlockDistance.BLOCK
+        val totalBlocks = blockOffsets[k]
+        val blocks = ShortArray(totalBlocks * dim * block)
+        readShortsInto(inp, blocks)
+        val blockSlots = totalBlocks * block
+        val blockLabels = unpackBits(readExactly(inp, (blockSlots + 7) / 8), blockSlots)
 
         val k1 = inp.readInt()
         val metaCentroids = FloatArray(k1 * dim) { inp.readFloat() }
         val metaOfCell = IntArray(k) { inp.readInt() }
 
-        return IvfIndex(centroids, offsets, store, labels, dim, k, metaCentroids, k1, metaOfCell, nprobe1, nprobe2)
+        return IvfIndex(centroids, offsets, blocks, blockOffsets, blockLabels, dim, k, metaCentroids, k1, metaOfCell, nprobe1, nprobe2)
     }
 
     /** Reads big-endian shorts into [dst] in 64KB chunks (no second full-size buffer). */

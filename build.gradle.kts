@@ -11,10 +11,25 @@ version = "1.0.0-SNAPSHOT"
 
 application {
     mainClass = "dev.santo.bootstrap.MainKt"
+    // The SIMD distance kernel (search.BlockDistance, Java) imports jdk.incubator.vector;
+    // the incubator module must be added to every JVM that runs the compiled code.
+    applicationDefaultJvmArgs = listOf("--add-modules", "jdk.incubator.vector")
 }
 
 kotlin {
     jvmToolchain(25)
+}
+
+// jdk.incubator.vector is an incubator module: it must be added at javac and at any
+// JVM (test, run, the offline JavaExec tools) that loads the compiled kernel.
+tasks.withType<JavaCompile>().configureEach {
+    options.compilerArgs.addAll(listOf("--add-modules", "jdk.incubator.vector"))
+}
+tasks.withType<Test>().configureEach {
+    jvmArgs("--add-modules", "jdk.incubator.vector")
+}
+tasks.withType<JavaExec>().configureEach {
+    jvmArgs("--add-modules", "jdk.incubator.vector")
 }
 
 dependencies {
@@ -98,10 +113,20 @@ graalvmNative {
         // the contest's 0.425-CPU budget; the previous quickBuild image shipped an
         // unoptimized binary that wasted exactly the CPU it could not spare.
         buildArgs.add("-O3")
-        // Target the SSE4.2 baseline (x86-64-v2): safe on the contest Mac Mini (Late
-        // 2014, Haswell) and on the CI builder. Never use -march=native — the CI CPU
-        // may emit instructions the Mac Mini lacks, crashing with SIGILL at runtime.
-        buildArgs.add("-march=x86-64-v2")
+        // Enable the SIMD distance kernel (search.BlockDistance). GraalVM 25 only
+        // emits real machine SIMD for the Vector API at an AVX2 target — an SSE-only
+        // build slow-emulates it ~230-300× (measured: see the SIMD gate). So the
+        // module flag is paired with the v3 march below; together they give ~6.5×.
+        buildArgs.add("--add-modules")
+        buildArgs.add("jdk.incubator.vector")
+        buildArgs.add("-H:+UnlockExperimentalVMOptions")
+        buildArgs.add("-H:+VectorAPISupport")
+        // Target AVX2 (x86-64-v3), NOT the former v2 baseline: the contest Mac Mini
+        // (Late 2014) is Haswell, which has AVX2, and the public 5881-score entry won
+        // with hand-written AVX2 SIMD on this same contest — so v3 is safe here and is
+        // REQUIRED for the Vector API kernel to vectorize. Never use -march=native.
+        // (Risk: hardware without AVX2 would SIGILL — but a preview is reversible.)
+        buildArgs.add("-march=x86-64-v3")
         // Align the runtime with the cgroup CPU quota (0.425 ≈ 1 core). Without this,
         // the GC / ForkJoin / CIO pools size to the host's core count and the CFS quota
         // throttles them in bursts (frozen ~58ms every 100ms), which spikes p99.

@@ -32,30 +32,35 @@ const val DEFAULT_NPROBE2 = 6
  * with no loss of detection — IVF cells follow the data, so (unlike the old VP-tree)
  * the dim5-saturated randomized-date tail does not degenerate.
  *
- * Layout: [centroids] and [metaCentroids] are centroid-major (each centroid's dims
- * contiguous → the scalar scan streams through cache). Points are grouped by cell,
- * contiguous in [store] (int16 logical codes; the int16 scheme reserves a negative
- * sentinel so the stored Short IS its own code), [offsets] delimits each cell, and
- * [labels] is parallel to the points. The hot path is allocation-free (pooled
- * per-thread [Scratch], reset per query — safe: a search is synchronous and
- * non-reentrant, and ActiveProcessorCount=1 keeps the CIO worker count tiny).
+ * Point storage is SoA-16 BLOCKS (see [BlockDistance]): each cell's points are
+ * packed into blocks of [BlockDistance.BLOCK], dimension-major within a block, so
+ * the level-3 scan computes 16 squared distances per SIMD pass instead of one
+ * scalar distance at a time (~6.5× on an AVX2 native image). [offsets] keeps the
+ * logical (real) per-cell point counts; [blockOffsets] delimits each cell's blocks;
+ * the trailing partial block is padded and the padding slots are masked out (only
+ * the first `count` real slots are offered). [centroids]/[metaCentroids] stay
+ * centroid-major and are scanned scalar — they are few (64 + ~256) and not the cost.
+ * The hot path is allocation-free (pooled per-thread [Scratch], reset per query —
+ * safe: a search is synchronous, non-reentrant, ActiveProcessorCount=1).
  */
 class IvfIndex internal constructor(
-    internal val centroids: FloatArray,     // k*dim, centroid-major (cell centroids)
-    internal val offsets: IntArray,         // size k+1; cell c occupies [offsets[c], offsets[c+1])
-    internal val store: ShortArray,         // n*dim int16, grouped by cell
-    internal val labels: BooleanArray,      // size n
+    internal val centroids: FloatArray,      // k*dim, centroid-major (cell centroids)
+    internal val offsets: IntArray,          // size k+1; cumulative REAL point counts (logical)
+    internal val blocks: ShortArray,         // totalBlocks*dim*BLOCK int16, SoA-16, grouped by cell
+    internal val blockOffsets: IntArray,     // size k+1; cell c occupies blocks [blockOffsets[c], blockOffsets[c+1])
+    internal val blockLabels: BooleanArray,  // size totalBlocks*BLOCK; padding slots = false
     internal val dim: Int,
     internal val k: Int,
-    internal val metaCentroids: FloatArray, // k1*dim, centroid-major (district centroids)
+    internal val metaCentroids: FloatArray,  // k1*dim, centroid-major (district centroids)
     internal val k1: Int,
-    internal val metaOfCell: IntArray,      // size k; cell -> its district
+    internal val metaOfCell: IntArray,       // size k; cell -> its district
     nprobe1: Int = DEFAULT_NPROBE1,
     nprobe2: Int = DEFAULT_NPROBE2,
 ) : VectorIndex {
 
     private val np1 = nprobe1.coerceIn(1, k1)
     private val np2 = nprobe2.coerceIn(1, k)
+    private val blockStride = dim * BlockDistance.BLOCK
 
     /** Cells belonging to each district, built once from [metaOfCell]. */
     private val metaMembers: Array<IntArray> = run {
@@ -82,19 +87,38 @@ class IvfIndex internal constructor(
             }
         }
 
-        // Level 3: scan the np2 nearest cells' points.
+        // Level 3: SIMD-scan the np2 nearest cells' points, block by block.
         val knn = s.knn.also { it.reset() }
+        val out = s.out
+        val block = BlockDistance.BLOCK
         for (ri in 0 until np2) {
             if (s.cellDist[ri] == Double.MAX_VALUE) continue
             val cell = s.cellIdx[ri]
-            val end = offsets[cell + 1]
-            var p = offsets[cell]
-            while (p < end) {
-                knn.offer(squaredDistance(codes, store, p * dim, dim).toDouble(), labels[p])
-                p++
+            var remaining = offsets[cell + 1] - offsets[cell]
+            val blkEnd = blockOffsets[cell + 1]
+            var blk = blockOffsets[cell]
+            while (blk < blkEnd) {
+                BlockDistance.distances(codes, blocks, blk * blockStride, dim, out)
+                val slots = if (remaining < block) remaining else block
+                val lbase = blk * block
+                for (slot in 0 until slots) knn.offer(out[slot].toDouble(), blockLabels[lbase + slot])
+                remaining -= slots
+                blk++
             }
         }
         return knn.fraudCount()
+    }
+
+    /** int16 code of the [within]-th point of [cell] in dimension [d] (offline-tool access). */
+    internal fun codeAt(cell: Int, within: Int, d: Int): Int {
+        val blk = blockOffsets[cell] + within / BlockDistance.BLOCK
+        return blocks[blk * blockStride + d * BlockDistance.BLOCK + within % BlockDistance.BLOCK].toInt()
+    }
+
+    /** Fraud label of the [within]-th point of [cell] (offline-tool access). */
+    internal fun labelAt(cell: Int, within: Int): Boolean {
+        val blk = blockOffsets[cell] + within / BlockDistance.BLOCK
+        return blockLabels[blk * BlockDistance.BLOCK + within % BlockDistance.BLOCK]
     }
 
     /** Distance² from query codes to a centroid-major centroid at [base] (float). */
@@ -142,6 +166,7 @@ class IvfIndex internal constructor(
         val metaIdx = IntArray(np1)
         val cellDist = DoubleArray(np2)
         val cellIdx = IntArray(np2)
+        val out = LongArray(BlockDistance.BLOCK)
         val knn = KNearest(k)
     }
 }

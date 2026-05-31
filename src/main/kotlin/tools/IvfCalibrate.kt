@@ -140,15 +140,16 @@ private fun prunedSearch(index: IvfIndex, query: DoubleArray, nprobe: Int, radii
         val start = index.offsets[cell]; val end = index.offsets[cell + 1]
         var p = start
         while (p < end) {
+            val within = p - start
             raw++
             val w = sqrt(bestSq[K_NEIGHBORS - 1])
             if (kotlin.math.abs(dCell - radii[p]) < w || bestSq[K_NEIGHBORS - 1] == Double.MAX_VALUE) {
                 pruned++
-                val d = pointDistSq(index, codes, p).toDouble()
+                val d = pointDistSq(index, codes, cell, within).toDouble()
                 if (d < bestSq[K_NEIGHBORS - 1]) {
                     var i = K_NEIGHBORS - 1
                     while (i > 0 && bestSq[i - 1] > d) { bestSq[i] = bestSq[i - 1]; bestFraud[i] = bestFraud[i - 1]; i-- }
-                    bestSq[i] = d; bestFraud[i] = index.labels[p]
+                    bestSq[i] = d; bestFraud[i] = index.labelAt(cell, within)
                 }
             }
             p++
@@ -179,19 +180,21 @@ private fun centroidDistSq(index: IvfIndex, codes: IntArray, c: Int): Double {
     return sum
 }
 
-private fun pointDistSq(index: IvfIndex, codes: IntArray, p: Int): Long {
-    var sum = 0L; val base = p * index.dim
-    for (d in 0 until index.dim) { val diff = (codes[d] - index.store[base + d]).toLong(); sum += diff * diff }
+private fun pointDistSq(index: IvfIndex, codes: IntArray, cell: Int, within: Int): Long {
+    var sum = 0L
+    for (d in 0 until index.dim) { val diff = (codes[d] - index.codeAt(cell, within, d)).toLong(); sum += diff * diff }
     return sum
 }
 
 private fun fillRadii(index: IvfIndex, c: Int, radii: FloatArray) {
     val dim = index.dim
     val cb = c * dim
-    var p = index.offsets[c]; val end = index.offsets[c + 1]
+    val start = index.offsets[c]; val end = index.offsets[c + 1]
+    var p = start
     while (p < end) {
-        var sum = 0.0; val base = p * dim
-        for (d in 0 until dim) { val diff = index.store[base + d] - index.centroids[cb + d]; sum += diff * diff }
+        val within = p - start
+        var sum = 0.0
+        for (d in 0 until dim) { val diff = index.codeAt(c, within, d) - index.centroids[cb + d]; sum += diff * diff }
         radii[p] = sqrt(sum).toFloat()
         p++
     }
