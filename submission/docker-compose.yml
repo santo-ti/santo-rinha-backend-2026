@@ -3,36 +3,46 @@
 # `submission` branch carries no source code. The `__IMAGE_REF__` placeholder is
 # replaced with the freshly published, immutable tag by
 # .github/workflows/publish-submission.yml when it materializes the branch.
-x-api: &api
-  image: __IMAGE_REF__
-  # Two-level IVF routing: $NPROBE1 districts → $NPROBE2 cells per query. Tunable
-  # here WITHOUT rebuilding the image (runtime reads them — see bootstrap.IndexLoader).
-  # The 1.4.0 image is built with k1=128 districts (IVF_META_CELLS) + the AVX2 SIMD
-  # distance kernel, so the high-nprobe E=0 routing (NPROBE1=16/NPROBE2=48 → det 3000
-  # offline) is affordable. Start at 4/6 (the proven 3363 detection) to confirm the
-  # SIMD/AVX2 image runs on the contest hardware, then raise to 16/48 here (no rebuild)
-  # for the zero-error push. Lower NPROBE2 if a preview shows p99 pressure.
-  environment:
-    NPROBE1: "4"
-    NPROBE2: "6"
-  networks:
-    - rinha
-  deploy:
-    resources:
-      limits:
-        cpus: "0.45"
-        memory: "160MB"
+#
+# v1.5.0: HAProxy reaches each API over a UNIX DOMAIN SOCKET on a shared tmpfs volume
+# (SERVER_SOCKET_PATH) — no loopback TCP on the LB→API hop, a p99 cut the top entries
+# rely on. NPROBE starts at 4/6 (the proven 3788 detection) to isolate the UDS latency
+# effect; raise on the branch (no rebuild) once the p99 headroom is confirmed.
 
 services:
   api-1:
-    <<: *api
+    image: __IMAGE_REF__
+    environment:
+      NPROBE1: "4"
+      NPROBE2: "6"
+      SERVER_SOCKET_PATH: /sockets/api1.sock
+    volumes:
+      - sockets:/sockets
+    networks:
+      - rinha
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "160MB"
 
   api-2:
-    <<: *api
+    image: __IMAGE_REF__
+    environment:
+      NPROBE1: "4"
+      NPROBE2: "6"
+      SERVER_SOCKET_PATH: /sockets/api2.sock
+    volumes:
+      - sockets:/sockets
+    networks:
+      - rinha
+    deploy:
+      resources:
+        limits:
+          cpus: "0.45"
+          memory: "160MB"
 
   lb:
-    # HAProxy (tcp mode) replaced nginx: it cut p99 75ms→19ms at the same config
-    # (preview #7508, 2774→3363) — the LB was a real bottleneck. Config in haproxy.cfg.
     image: haproxy:2.9-alpine
     depends_on:
       - api-1
@@ -41,6 +51,7 @@ services:
       - "9999:9999"
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - sockets:/sockets
     networks:
       - rinha
     deploy:
@@ -48,6 +59,13 @@ services:
         limits:
           cpus: "0.10"
           memory: "30MB"
+
+volumes:
+  sockets:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
 
 networks:
   rinha:

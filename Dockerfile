@@ -36,9 +36,9 @@ RUN IVF_META_CELLS=128 java -Xmx5g --add-modules jdk.incubator.vector -cp "build
 # Capture native-image reachability metadata by exercising the app on the JVM with
 # the tracing agent (covers Ktor CIO's reflective AtomicReferenceFieldUpdater fields).
 RUN printf '%s' '{"id":"tx-1","transaction":{"amount":41.12,"installments":2,"requested_at":"2026-03-11T18:45:53Z"},"customer":{"avg_amount":82.24,"tx_count_24h":3,"known_merchants":["MERC-003","MERC-016"]},"merchant":{"id":"MERC-016","mcc":"5411","avg_amount":60.25},"terminal":{"is_online":false,"card_present":true,"km_from_home":29.23},"last_transaction":null}' > /tmp/p.json \
- && ( INDEX_PATH=/app/index.bin java -agentlib:native-image-agent=config-output-dir=/app/native-config --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.bootstrap.MainKt & echo $! > /tmp/app.pid ) \
- && for i in $(seq 1 40); do curl -sf -o /dev/null http://localhost:8080/ready && break || sleep 1; done \
- && curl -s -X POST http://localhost:8080/fraud-score -H "Content-Type: application/json" -d @/tmp/p.json > /dev/null || true \
+ && ( INDEX_PATH=/app/index.bin SERVER_SOCKET_PATH=/tmp/agent.sock java -agentlib:native-image-agent=config-output-dir=/app/native-config --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.bootstrap.MainKt & echo $! > /tmp/app.pid ) \
+ && for i in $(seq 1 40); do curl -sf -o /dev/null --unix-socket /tmp/agent.sock http://localhost/ready && break || sleep 1; done \
+ && curl -s -X POST --unix-socket /tmp/agent.sock http://localhost/fraud-score -H "Content-Type: application/json" -d @/tmp/p.json > /dev/null || true \
  && sleep 1 \
  && kill -TERM "$(cat /tmp/app.pid)" || true \
  && sleep 3 \
