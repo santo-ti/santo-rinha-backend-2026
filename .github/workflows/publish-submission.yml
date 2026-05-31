@@ -3,7 +3,7 @@ name: Publish image & submission branch
 # Builds the GraalVM native-image, publishes it to GHCR under an immutable,
 # versioned tag (never `latest`), and — in the same job, to keep the branch and
 # the image atomic — materializes the orphan `submission` branch with only the
-# files the Rinha evaluation needs (docker-compose.yml + nginx.conf + info.json).
+# files the Rinha evaluation needs (docker-compose.yml + haproxy.cfg + info.json).
 #
 # Trigger by pushing a version tag (e.g. `git tag v1.0.0 && git push origin v1.0.0`)
 # or manually via the Actions tab (workflow_dispatch) supplying a version.
@@ -84,7 +84,7 @@ jobs:
           # the working tree on an orphan branch with only those files.
           staging="$(mktemp -d)"
           sed "s#__IMAGE_REF__#${IMAGE_REF}#g" submission/docker-compose.yml > "${staging}/docker-compose.yml"
-          cp nginx/nginx.conf "${staging}/nginx.conf"
+          cp haproxy.cfg "${staging}/haproxy.cfg"
           cp info.json "${staging}/info.json"
 
           git config user.name "github-actions[bot]"
@@ -93,10 +93,10 @@ jobs:
           git rm -rf --quiet . || true
 
           cp "${staging}/docker-compose.yml" docker-compose.yml
-          cp "${staging}/nginx.conf" nginx.conf
+          cp "${staging}/haproxy.cfg" haproxy.cfg
           cp "${staging}/info.json" info.json
 
-          git add docker-compose.yml nginx.conf info.json
+          git add docker-compose.yml haproxy.cfg info.json
           git commit -m "submission: ${IMAGE_REF}"
           git push -f origin submission-build:submission
 

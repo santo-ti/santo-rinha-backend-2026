@@ -7,11 +7,11 @@ x-api: &api
   image: __IMAGE_REF__
   # Two-level IVF routing: $NPROBE1 districts → $NPROBE2 cells per query. Tunable
   # here WITHOUT rebuilding the image (runtime reads them — see bootstrap.IndexLoader).
-  # Calibrated offline over the 3M refs with randomized-date queries (tools.IvfTwoLevel,
-  # k=4096, k1=64): NPROBE1=4/NPROBE2=6 ≈ 3.8k comparisons/query (≈0.23ms on the contest
-  # core, well under ~1ms) at detection ~exact (contest E≈81). Flat single-level routing
-  # cost ~16k comps and saturated (#7422/#7428, p99 cut). Lower NPROBE2 (4) if CPU is
-  # tight; raise (8) only if a preview shows p99 headroom AND missing recall.
+  # The 1.4.0 image is built with k1=128 districts (IVF_META_CELLS) + the AVX2 SIMD
+  # distance kernel, so the high-nprobe E=0 routing (NPROBE1=16/NPROBE2=48 → det 3000
+  # offline) is affordable. Start at 4/6 (the proven 3363 detection) to confirm the
+  # SIMD/AVX2 image runs on the contest hardware, then raise to 16/48 here (no rebuild)
+  # for the zero-error push. Lower NPROBE2 if a preview shows p99 pressure.
   environment:
     NPROBE1: "4"
     NPROBE2: "6"
@@ -31,14 +31,16 @@ services:
     <<: *api
 
   lb:
-    image: nginx:1.27-alpine
+    # HAProxy (tcp mode) replaced nginx: it cut p99 75ms→19ms at the same config
+    # (preview #7508, 2774→3363) — the LB was a real bottleneck. Config in haproxy.cfg.
+    image: haproxy:2.9-alpine
     depends_on:
       - api-1
       - api-2
     ports:
       - "9999:9999"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     networks:
       - rinha
     deploy:

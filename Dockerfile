@@ -28,7 +28,10 @@ RUN ./gradlew --no-daemon buildFatJar
 ARG INDEX_MAX_SIZE=3000000
 # -Xmx5g: parsing+building the 3M index peaks ~1.5GB; 5g is safe on a 7GB CI runner
 # and leaves headroom for the heavier nativeCompile step that follows.
-RUN java -Xmx5g --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.tools.BuildIndexKt /refs.json.gz index.bin $INDEX_MAX_SIZE
+# IVF_META_CELLS=128: k1=128 districts (vs the old 64) so the high-nprobe routing
+# can reach E=0 (NPROBE1=16/NPROBE2=48 → det 3000 offline), affordable with the SIMD
+# kernel. NPROBE itself stays a pure runtime env lever on the submission branch.
+RUN IVF_META_CELLS=128 java -Xmx5g --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.tools.BuildIndexKt /refs.json.gz index.bin $INDEX_MAX_SIZE
 
 # Capture native-image reachability metadata by exercising the app on the JVM with
 # the tracing agent (covers Ktor CIO's reflective AtomicReferenceFieldUpdater fields).
