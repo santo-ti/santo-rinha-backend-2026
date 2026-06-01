@@ -4,17 +4,20 @@
 # replaced with the freshly published, immutable tag by
 # .github/workflows/publish-submission.yml when it materializes the branch.
 #
-# v1.5.0: HAProxy reaches each API over a UNIX DOMAIN SOCKET on a shared tmpfs volume
-# (SERVER_SOCKET_PATH) — no loopback TCP on the LB→API hop, a p99 cut the top entries
-# rely on. NPROBE starts at 4/6 (the proven 3788 detection) to isolate the UDS latency
-# effect; raise on the branch (no rebuild) once the p99 headroom is confirmed.
+# v1.6.0: pre-rendered JSON responses (zero hot-path serialization) + HAProxy reaches
+# each API over a UNIX DOMAIN SOCKET on a shared tmpfs volume (SERVER_SOCKET_PATH) — no
+# loopback TCP on the LB→API hop, a p99 cut the top entries rely on. NPROBE 16/12 is the
+# CHAMPION config: preview #7644 (image 1.4.0, HAProxy TCP, 16/12) scored 4777 at p99
+# 5.6ms with detection maxed (E=37). This image adds UDS + pre-rendered on top; if a
+# preview shows http_errors (native unix-bind issue) or a p99 regression, restore the
+# 4777 baseline: image 1.4.0 + TCP haproxy.cfg (server apiN api-N:8080) + NPROBE 16/12.
 
 services:
   api-1:
     image: __IMAGE_REF__
     environment:
-      NPROBE1: "4"
-      NPROBE2: "6"
+      NPROBE1: "16"
+      NPROBE2: "12"
       SERVER_SOCKET_PATH: /sockets/api1.sock
     volumes:
       - sockets:/sockets
@@ -29,8 +32,8 @@ services:
   api-2:
     image: __IMAGE_REF__
     environment:
-      NPROBE1: "4"
-      NPROBE2: "6"
+      NPROBE1: "16"
+      NPROBE2: "12"
       SERVER_SOCKET_PATH: /sockets/api2.sock
     volumes:
       - sockets:/sockets
