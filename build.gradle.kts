@@ -89,6 +89,32 @@ tasks.register<JavaExec>("buildSmoke") {
     args = listOf("src/test/resources/example-references.json", "build/smoke.bin")
 }
 
+// Local IVF build over the 3M refs with CPU cap + cell-split, for offline measurement.
+// Run: ./gradlew buildIvf -PivfK=4096 -PmaxCell=512 -Ppar=4 -Pargs="build/refs-3m.json.gz build/ivf-split.bin"
+tasks.register<JavaExec>("buildIvf") {
+    group = "verification"
+    description = "Build an IVF index (with cell-split) over the references, CPU-capped."
+    mainClass.set("dev.santo.tools.BuildIndexKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    maxHeapSize = "10g"
+    environment("IVF_K", (project.findProperty("ivfK") as String?) ?: "4096")
+    environment("IVF_MAX_CELL", (project.findProperty("maxCell") as String?) ?: "512")
+    environment("IVF_META_CELLS", (project.findProperty("metaCells") as String?) ?: "128")
+    environment("IVF_PARALLELISM", (project.findProperty("par") as String?) ?: "4")
+    (project.findProperty("args") as String?)?.let { args = it.trim().split(" ") }
+}
+
+// Offline cost measurement of the EXACT bbox branch-and-bound search (never shipped).
+// Run: ./gradlew exactProbe -Pargs="build/ivf-k4096-i15.bin build/gold-N5000-fr0.5.bin 5000 4"
+tasks.register<JavaExec>("exactProbe") {
+    group = "verification"
+    description = "Measure exact bbox-pruned IVF search cost (points scanned p99) + error over 3M."
+    mainClass.set("dev.santo.tools.ExactProbeKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    maxHeapSize = "10g"
+    (project.findProperty("args") as String?)?.let { args = it.trim().split(" ") }
+}
+
 // Offline measurement of two-level (district→cell) IVF routing (never shipped).
 tasks.register<JavaExec>("ivfTwoLevel") {
     group = "verification"

@@ -28,6 +28,7 @@ fun main(args: Array<String>) {
     val k = System.getenv("IVF_K")?.toIntOrNull() ?: IvfBuilder.DEFAULT_CENTROIDS
     val iterations = System.getenv("IVF_ITERS")?.toIntOrNull() ?: 18
     val metaCells = System.getenv("IVF_META_CELLS")?.toIntOrNull() ?: DEFAULT_META_CELLS
+    val maxCellSize = System.getenv("IVF_MAX_CELL")?.toIntOrNull() ?: IvfBuilder.DEFAULT_MAX_CELL_SIZE
 
     val references = input.inputStream().buffered().use { raw ->
         val stream = if (input.name.endsWith(".gz")) GZIPInputStream(raw) else raw
@@ -35,10 +36,20 @@ fun main(args: Array<String>) {
     }
     val refs = if (references.size > maxSize) sample(references, maxSize) else references
 
-    val index = IvfBuilder.build(refs, k = k, iterations = iterations, metaCells = metaCells)
+    // IVF_PARALLELISM caps the k-means cores for LOCAL builds (so it doesn't freeze the
+    // machine); unset on CI => the common pool uses every core for the fastest image build.
+    val parallelism = System.getenv("IVF_PARALLELISM")?.toIntOrNull()
+    val index = if (parallelism != null) {
+        val pool = java.util.concurrent.ForkJoinPool(parallelism)
+        pool.submit<dev.santo.search.IvfIndex> {
+            IvfBuilder.build(refs, k = k, iterations = iterations, metaCells = metaCells, maxCellSize = maxCellSize)
+        }.get()
+    } else {
+        IvfBuilder.build(refs, k = k, iterations = iterations, metaCells = metaCells, maxCellSize = maxCellSize)
+    }
     output.outputStream().buffered().use { IvfWriter.writeTo(index, it) }
     val cap = if (maxSize == Int.MAX_VALUE) "no cap" else "cap $maxSize"
-    println("Built IVF index: ${refs.size} references ($cap), k=$k iters=$iterations k1=$metaCells -> ${output.length()} bytes at ${output.path}")
+    println("Built IVF index: ${refs.size} references ($cap), k=$k iters=$iterations k1=$metaCells maxCell=$maxCellSize -> ${output.length()} bytes at ${output.path}")
 }
 
 /** Uniform random sample without replacement, deterministic seed. */

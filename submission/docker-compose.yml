@@ -4,46 +4,28 @@
 # replaced with the freshly published, immutable tag by
 # .github/workflows/publish-submission.yml when it materializes the branch.
 #
-# v1.6.0: pre-rendered JSON responses (zero hot-path serialization) + HAProxy reaches
-# each API over a UNIX DOMAIN SOCKET on a shared tmpfs volume (SERVER_SOCKET_PATH) — no
-# loopback TCP on the LB→API hop, a p99 cut the top entries rely on. NPROBE 16/12 is the
-# CHAMPION config: preview #7644 (image 1.4.0, HAProxy TCP, 16/12) scored 4777 at p99
-# 5.6ms with detection maxed (E=37). This image adds UDS + pre-rendered on top; if a
-# preview shows http_errors (native unix-bind issue) or a p99 regression, restore the
-# 4777 baseline: image 1.4.0 + TCP haproxy.cfg (server apiN api-N:8080) + NPROBE 16/12.
+# v1.7.0: EXACT bbox branch-and-bound search over a cell-split IVF index (santannaf's
+# algorithm) → ZERO routing error (det maxed) at low scanned-point cost (offline over
+# 3M randomized-date queries: E=0, points mean 3.4k / p99 16.6k). NPROBE is IGNORED by
+# the exact search, so it is not set here. LB is HAProxy in TCP mode (the proven 4777
+# infra) — UDS was tried in v1.6.0 and FAILED the contest health check ("No status"),
+# so the API speaks plain TCP on :8080 and HAProxy forwards bytes.
+x-api: &api
+  image: __IMAGE_REF__
+  networks:
+    - rinha
+  deploy:
+    resources:
+      limits:
+        cpus: "0.45"
+        memory: "160MB"
 
 services:
   api-1:
-    image: __IMAGE_REF__
-    environment:
-      NPROBE1: "16"
-      NPROBE2: "12"
-      SERVER_SOCKET_PATH: /sockets/api1.sock
-    volumes:
-      - sockets:/sockets
-    networks:
-      - rinha
-    deploy:
-      resources:
-        limits:
-          cpus: "0.45"
-          memory: "160MB"
+    <<: *api
 
   api-2:
-    image: __IMAGE_REF__
-    environment:
-      NPROBE1: "16"
-      NPROBE2: "12"
-      SERVER_SOCKET_PATH: /sockets/api2.sock
-    volumes:
-      - sockets:/sockets
-    networks:
-      - rinha
-    deploy:
-      resources:
-        limits:
-          cpus: "0.45"
-          memory: "160MB"
+    <<: *api
 
   lb:
     image: haproxy:2.9-alpine
@@ -54,7 +36,6 @@ services:
       - "9999:9999"
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-      - sockets:/sockets
     networks:
       - rinha
     deploy:
@@ -62,13 +43,6 @@ services:
         limits:
           cpus: "0.10"
           memory: "30MB"
-
-volumes:
-  sockets:
-    driver: local
-    driver_opts:
-      type: tmpfs
-      device: tmpfs
 
 networks:
   rinha:

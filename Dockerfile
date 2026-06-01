@@ -17,28 +17,26 @@ COPY src ./src
 
 # JVM fat jar (used for the index builder tool and the agent run), then the index.
 RUN ./gradlew --no-daemon buildFatJar
-# Build the two-level IVF index over the FULL 3M reference set (INDEX_MAX_SIZE caps
-# it only if set below 3M; IVF_K / IVF_ITERS tune the k-means granularity). IVF
-# partitions the 3M into k=4096 cells, then clusters those into k1=64 districts; a
-# query routes through $NPROBE1 districts → $NPROBE2 cells (env-tunable at runtime).
-# Calibrated offline (tools.IvfTwoLevel): NPROBE1=4/NPROBE2=6 ≈ 3.8k comparisons/query
-# at ~exact detection — vs the flat single-level ~16k that saturated the 0.45 core
-# (#7428, p99 cut), and unlike the old VP-tree which degenerated on the dim5-saturated
-# tail. The ~81MB artifact loads into ~85MB of heap, within the 120MB MaxHeapSize.
+# Build the IVF index over the FULL 3M reference set with EXACT bbox search. IVF
+# partitions the 3M into k=4096 coarse cells, then SPLITS any cell > IVF_MAX_CELL=256
+# points by a local sub-k-means (santannaf's MAX_CLUSTER_SIZE) → ~25k small cells with
+# tight bounding boxes; those are clustered into k1=128 districts. The runtime search is
+# EXACT branch-and-bound (search.IvfIndex): it visits only the cells whose box could
+# hold a closer neighbor, so it reproduces brute-force top-5 (ZERO routing error) while
+# the small/tight cells keep the scanned-point cost low even on the dim5-saturated tail
+# (offline over 3M randomized-date queries: E=0, points mean 3.4k / p99 16.6k). NPROBE
+# is IGNORED by the exact search (kept only for env/format compat). ~91MB artifact.
 ARG INDEX_MAX_SIZE=3000000
-# -Xmx5g: parsing+building the 3M index peaks ~1.5GB; 5g is safe on a 7GB CI runner
-# and leaves headroom for the heavier nativeCompile step that follows.
-# IVF_META_CELLS=128: k1=128 districts (vs the old 64) so the high-nprobe routing
-# can reach E=0 (NPROBE1=16/NPROBE2=48 → det 3000 offline), affordable with the SIMD
-# kernel. NPROBE itself stays a pure runtime env lever on the submission branch.
-RUN IVF_META_CELLS=128 java -Xmx5g --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.tools.BuildIndexKt /refs.json.gz index.bin $INDEX_MAX_SIZE
+# -Xmx5g: parsing+building the 3M index peaks ~1.5GB; 5g is safe on a 7GB CI runner.
+# IVF_PARALLELISM unset here => the k-means uses every CI core for the fastest build.
+RUN IVF_META_CELLS=128 IVF_MAX_CELL=256 java -Xmx5g --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.tools.BuildIndexKt /refs.json.gz index.bin $INDEX_MAX_SIZE
 
 # Capture native-image reachability metadata by exercising the app on the JVM with
 # the tracing agent (covers Ktor CIO's reflective AtomicReferenceFieldUpdater fields).
 RUN printf '%s' '{"id":"tx-1","transaction":{"amount":41.12,"installments":2,"requested_at":"2026-03-11T18:45:53Z"},"customer":{"avg_amount":82.24,"tx_count_24h":3,"known_merchants":["MERC-003","MERC-016"]},"merchant":{"id":"MERC-016","mcc":"5411","avg_amount":60.25},"terminal":{"is_online":false,"card_present":true,"km_from_home":29.23},"last_transaction":null}' > /tmp/p.json \
- && ( INDEX_PATH=/app/index.bin SERVER_SOCKET_PATH=/tmp/agent.sock java -agentlib:native-image-agent=config-output-dir=/app/native-config --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.bootstrap.MainKt & echo $! > /tmp/app.pid ) \
- && for i in $(seq 1 40); do curl -sf -o /dev/null --unix-socket /tmp/agent.sock http://localhost/ready && break || sleep 1; done \
- && curl -s -X POST --unix-socket /tmp/agent.sock http://localhost/fraud-score -H "Content-Type: application/json" -d @/tmp/p.json > /dev/null || true \
+ && ( INDEX_PATH=/app/index.bin java -agentlib:native-image-agent=config-output-dir=/app/native-config --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.bootstrap.MainKt & echo $! > /tmp/app.pid ) \
+ && for i in $(seq 1 40); do curl -sf -o /dev/null http://localhost:8080/ready && break || sleep 1; done \
+ && curl -s -X POST http://localhost:8080/fraud-score -H "Content-Type: application/json" -d @/tmp/p.json > /dev/null || true \
  && sleep 1 \
  && kill -TERM "$(cat /tmp/app.pid)" || true \
  && sleep 3 \

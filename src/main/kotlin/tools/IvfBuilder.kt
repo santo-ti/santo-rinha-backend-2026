@@ -28,9 +28,10 @@ object IvfBuilder {
         metaCells: Int = DEFAULT_META_CELLS,
         nprobe1: Int = DEFAULT_NPROBE1,
         nprobe2: Int = DEFAULT_NPROBE2,
+        maxCellSize: Int = DEFAULT_MAX_CELL_SIZE,
     ): IvfIndex {
         val n = references.size
-        val cellCount = minOf(k, n)
+        val coarseK = minOf(k, n)
 
         val srcStore = ShortArray(n * dim)
         val srcLabels = BooleanArray(n)
@@ -39,11 +40,19 @@ object IvfBuilder {
             srcLabels[i] = references[i].isFraud
         }
 
-        val km = KMeans.cluster(srcStore, n, dim, cellCount, iterations)
+        val km = KMeans.cluster(srcStore, n, dim, coarseK, iterations)
+
+        // Split any cell larger than maxCellSize by a local sub-k-means (santannaf's
+        // MAX_CLUSTER_SIZE). Smaller cells => tighter per-cell bounding boxes => the
+        // exact branch-and-bound prunes far more on the dim5-saturated tail, keeping the
+        // scanned-point p99 low (the whole point: zero error AND low latency).
+        val (centroids, assignment, cellCount) =
+            if (maxCellSize > 0) splitLargeCells(srcStore, n, dim, km, maxCellSize)
+            else Triple(km.centroids, km.assignment, km.k)
 
         // Logical (real) per-cell point counts, cumulative.
         val offsets = IntArray(cellCount + 1)
-        for (i in 0 until n) offsets[km.assignment[i] + 1]++
+        for (i in 0 until n) offsets[assignment[i] + 1]++
         for (c in 0 until cellCount) offsets[c + 1] += offsets[c]
 
         // Block offsets: each cell's points pad up to a multiple of BLOCK (SoA-16).
@@ -62,7 +71,7 @@ object IvfBuilder {
         val blockLabels = BooleanArray(totalBlocks * block)
         val within = IntArray(cellCount)
         for (i in 0 until n) {
-            val c = km.assignment[i]
+            val c = assignment[i]
             val j = within[c]++
             val blk = blockOffsets[c] + j / block
             val slot = j % block
@@ -74,9 +83,73 @@ object IvfBuilder {
 
         // Level-2: cluster the cell centroids into districts.
         val k1 = minOf(metaCells, cellCount)
-        val (metaCentroids, metaOfCell) = clusterCentroids(km.centroids, cellCount, dim, k1)
+        val (metaCentroids, metaOfCell) = clusterCentroids(centroids, cellCount, dim, k1)
 
-        return IvfIndex(km.centroids, offsets, blocks, blockOffsets, blockLabels, dim, cellCount, metaCentroids, k1, metaOfCell, nprobe1, nprobe2)
+        return IvfIndex(centroids, offsets, blocks, blockOffsets, blockLabels, dim, cellCount, metaCentroids, k1, metaOfCell, nprobe1, nprobe2)
+    }
+
+    /**
+     * Splits every coarse cell with more than [maxCellSize] points into
+     * `ceil(count / targetSubSize)` sub-cells via a local Lloyd k-means; cells already
+     * within the cap pass through unchanged. Returns the final centroid-major centroids,
+     * per-point assignment, and final cell count. Mirrors santannaf's `MAX_CLUSTER_SIZE`
+     * split — it bounds each cell's spatial extent so the per-cell bounding box is tight,
+     * which is what lets the exact branch-and-bound stay cheap on the saturated tail.
+     */
+    private fun splitLargeCells(
+        srcStore: ShortArray,
+        n: Int,
+        dim: Int,
+        km: KMeans.Result,
+        maxCellSize: Int,
+        targetSubSize: Int = maxCellSize / 2,
+    ): Triple<FloatArray, IntArray, Int> {
+        val pointsByCell = Array(km.k) { IntArray(0) }
+        run {
+            val counts = IntArray(km.k)
+            for (i in 0 until n) counts[km.assignment[i]]++
+            for (c in 0 until km.k) pointsByCell[c] = IntArray(counts[c])
+            val fill = IntArray(km.k)
+            for (i in 0 until n) { val c = km.assignment[i]; pointsByCell[c][fill[c]++] = i }
+        }
+
+        val finalCentroids = ArrayList<FloatArray>(km.k)
+        val finalAssignment = IntArray(n)
+        var kFinal = 0
+        for (c in 0 until km.k) {
+            val pts = pointsByCell[c]
+            if (pts.size <= maxCellSize) {
+                val id = kFinal++
+                finalCentroids.add(meanCentroid(srcStore, pts, dim))
+                for (p in pts) finalAssignment[p] = id
+            } else {
+                val nSub = (pts.size + targetSubSize - 1) / targetSubSize
+                val subStore = ShortArray(pts.size * dim)
+                for (j in pts.indices) System.arraycopy(srcStore, pts[j] * dim, subStore, j * dim, dim)
+                val sub = KMeans.cluster(subStore, pts.size, dim, nSub, iterations = 10, seed = (c + 1).toLong())
+                val base = kFinal
+                kFinal += sub.k
+                for (s in 0 until sub.k) {
+                    val cb = FloatArray(dim)
+                    System.arraycopy(sub.centroids, s * dim, cb, 0, dim)
+                    finalCentroids.add(cb)
+                }
+                for (j in pts.indices) finalAssignment[pts[j]] = base + sub.assignment[j]
+            }
+        }
+        val cent = FloatArray(kFinal * dim)
+        for (c in 0 until kFinal) System.arraycopy(finalCentroids[c], 0, cent, c * dim, dim)
+        println("Cell split: ${km.k} coarse cells -> $kFinal cells (cap $maxCellSize).")
+        return Triple(cent, finalAssignment, kFinal)
+    }
+
+    private fun meanCentroid(srcStore: ShortArray, pts: IntArray, dim: Int): FloatArray {
+        val cb = FloatArray(dim)
+        if (pts.isEmpty()) return cb
+        for (p in pts) { val base = p * dim; for (d in 0 until dim) cb[d] += srcStore[base + d] }
+        val inv = 1.0f / pts.size
+        for (d in 0 until dim) cb[d] *= inv
+        return cb
     }
 
     /**
@@ -127,4 +200,12 @@ object IvfBuilder {
 
     /** Default cell count. Tuned offline against the recall/cost curve. */
     const val DEFAULT_CENTROIDS = 4096
+
+    /**
+     * Cells larger than this are split by a local sub-k-means (santannaf's
+     * MAX_CLUSTER_SIZE). Caps each cell's spatial extent so its bounding box is tight,
+     * keeping the exact branch-and-bound's scanned-point count low on the saturated tail.
+     * 0 disables splitting.
+     */
+    const val DEFAULT_MAX_CELL_SIZE = 1024
 }
