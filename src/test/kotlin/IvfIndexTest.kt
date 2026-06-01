@@ -18,10 +18,10 @@ import kotlin.test.assertTrue
 
 /**
  * Validates the IVF index against the brute-force oracles on the example dataset.
- * The key invariant: at `nprobe == k` every cell is scanned, so IVF must reproduce
- * exact quantized brute force — any divergence is a bug in the IVF structure, not
- * quantization. Lower nprobe is the speed/recall lever, exercised faithfully on the
- * full 3M randomized-date set by the offline oracle (not here).
+ * The key invariant: the search is EXACT branch-and-bound (bbox-pruned), so it must
+ * reproduce exact quantized brute force REGARDLESS of the nprobe params — any divergence
+ * is a bug in the IVF structure or the bounding-box prune, not quantization. The
+ * `lowNprobe` index proves recall no longer depends on the probe count.
  */
 class IvfIndexTest {
 
@@ -35,9 +35,11 @@ class IvfIndexTest {
     private val doubleOracle = BruteForceIndex(references)
 
     private val k = minOf(16, references.size)
-    // metaCells=k (every cell its own district) + nprobe1=k + nprobe2=k scans every
-    // cell, so the two-level routing degenerates to exact quantized brute force.
+    // The search is exact by construction (bbox branch-and-bound), so nprobe is irrelevant.
     private val exact = IvfBuilder.build(references, k = k, metaCells = k, nprobe1 = k, nprobe2 = k)
+    // Same index built with the SMALLEST nprobe: must STILL be exact (proves the prune,
+    // not a high probe count, is what delivers recall). Uses real districts (metaCells<k).
+    private val lowNprobe = IvfBuilder.build(references, k = k, metaCells = minOf(4, k), nprobe1 = 1, nprobe2 = 1)
 
     private fun queries(): List<DoubleArray> {
         val fromReferences = references.map { it.vector }
@@ -46,12 +48,21 @@ class IvfIndexTest {
     }
 
     @Test
-    fun `IVF at nprobe equal k reproduces exact quantized brute force`() {
+    fun `IVF reproduces exact quantized brute force`() {
         var mismatches = 0
         for (q in queries()) {
             if (exact.nearestFraudCount(q) != quantizedOracle.nearestFraudCount(q)) mismatches++
         }
-        assertEquals(0, mismatches, "IVF (nprobe=k) diverged from quantized brute force")
+        assertEquals(0, mismatches, "IVF diverged from quantized brute force")
+    }
+
+    @Test
+    fun `IVF stays exact even at the smallest nprobe (bbox prune, not probe count)`() {
+        var mismatches = 0
+        for (q in queries()) {
+            if (lowNprobe.nearestFraudCount(q) != quantizedOracle.nearestFraudCount(q)) mismatches++
+        }
+        assertEquals(0, mismatches, "bbox branch-and-bound was not exact at nprobe=1 — prune bug")
     }
 
     @Test
