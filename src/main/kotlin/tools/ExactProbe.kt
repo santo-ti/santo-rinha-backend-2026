@@ -30,8 +30,10 @@ fun main(args: Array<String>) {
     val numQueries = args.getOrNull(2)?.toInt() ?: 5000
     val cores = Runtime.getRuntime().availableProcessors()
     val parallelism = args.getOrNull(3)?.toInt() ?: max(2, cores / 4)
-    val mode = args.getOrNull(4) ?: "dfs"   // "dfs" = current index-order; "bf" = best-first branch-and-bound
-    println("Search order: $mode")
+    val mode = args.getOrNull(4) ?: "dfs"   // "dfs" current exact; "bf" best-first exact; "approx" nprobe
+    val np1 = args.getOrNull(5)?.toIntOrNull() ?: 16
+    val np2 = args.getOrNull(6)?.toIntOrNull() ?: 12
+    println("Search mode: $mode" + if (mode == "approx") " (nprobe1=$np1 nprobe2=$np2)" else "")
     val fraudRatio = 0.5
     println("CPU cap: $parallelism of $cores cores.")
 
@@ -54,7 +56,11 @@ fun main(args: Array<String>) {
     val pool = ForkJoinPool(parallelism)
     pool.submit {
         IntStream.range(0, numQueries).parallel().forEach { qi ->
-            val r = if (mode == "bf") probe.searchBestFirst(queries[qi]) else probe.search(queries[qi])
+            val r = when (mode) {
+                "bf" -> probe.searchBestFirst(queries[qi])
+                "approx" -> probe.searchApprox(queries[qi], np1, np2)
+                else -> probe.search(queries[qi])
+            }
             val pred = r.fraud >= 3
             val gld = gold[qi] >= 3
             if (pred && !gld) fp[qi] = 1
@@ -200,6 +206,36 @@ private class ExactBboxProbe(private val index: dev.santo.search.IvfIndex) {
                 worst = bestSq[K_NEIGHBORS - 1]
             }
         }
+        var f = 0; for (i in 0 until K_NEIGHBORS) if (bestFraud[i]) f++
+        return ProbeResult(f, points, cellsScanned, acc[0])
+    }
+
+    /**
+     * Approximate (nprobe) IVF search — the pre-exact algorithm (image 1.4.0). Rank all k1
+     * districts by meta-centroid distance, take the [np1] nearest; among their member cells,
+     * take the [np2] nearest by cell-centroid distance; scan only those. Fixed cost (no tail),
+     * but misses the true 5-NN when it sits in an unprobed cell → some E. Measures the
+     * E-vs-WORK-COST curve to see if a config beats the exact search's 4756 / #7644's E=37.
+     */
+    fun searchApprox(query: DoubleArray, np1: Int, np2: Int): ProbeResult {
+        val codes = IntArray(dim) { quantizeToLogicalCode(query[it]) }
+        val bestSq = DoubleArray(K_NEIGHBORS) { Double.MAX_VALUE }
+        val bestFraud = BooleanArray(K_NEIGHBORS)
+        var points = 0
+        var cellsScanned = 0
+        val acc = LongArray(1)
+
+        val dd = DoubleArray(k1) { distSq(codes, metaCentroids, it * dim) }
+        acc[0] += k1.toLong() * dim
+        val topD = (0 until k1).sortedBy { dd[it] }.take(np1)
+
+        val cand = ArrayList<Int>()
+        for (d in topD) for (c in members[d]) cand.add(c)
+        val cd = DoubleArray(cand.size) { distSq(codes, centroids, cand[it] * dim) }
+        acc[0] += cand.size.toLong() * dim
+        val topC = (0 until cand.size).sortedBy { cd[it] }.take(np2)
+
+        for (ci in topC) { points += scanCell(cand[ci], codes, bestSq, bestFraud); cellsScanned++ }
         var f = 0; for (i in 0 until K_NEIGHBORS) if (bestFraud[i]) f++
         return ProbeResult(f, points, cellsScanned, acc[0])
     }
