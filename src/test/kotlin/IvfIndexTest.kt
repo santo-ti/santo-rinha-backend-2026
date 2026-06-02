@@ -12,6 +12,7 @@ import dev.santo.vectorization.Vectorizer
 import kotlinx.serialization.json.Json
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import kotlin.random.Random
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -86,5 +87,25 @@ class IvfIndexTest {
     @Test
     fun `every query yields a valid fraud count`() {
         for (q in queries()) assertTrue(exact.nearestFraudCount(q) in 0..5)
+    }
+
+    /**
+     * The per-dimension early-exit in the cell scan must stay bit-exact: it only skips
+     * points whose partial squared distance has already reached the current 5th-NN (which
+     * `offer` would reject anyway), so the top-5 — and the fraud count — is identical to a
+     * full-distance scan. Random queries sweep the cutoff across many worst-radius values
+     * (and the -1.0 no-history sentinel), exercising the early-exit far more than the tiny
+     * example corpus does.
+     */
+    @Test
+    fun `early-exit cell scan matches quantized brute force on randomized queries`() {
+        val rng = Random(1234)
+        val dim = references.first().vector.size
+        var mismatches = 0
+        repeat(2000) {
+            val q = DoubleArray(dim) { if (rng.nextInt(15) == 0) -1.0 else rng.nextDouble() }
+            if (exact.nearestFraudCount(q) != quantizedOracle.nearestFraudCount(q)) mismatches++
+        }
+        assertEquals(0, mismatches, "early-exit scan diverged from quantized brute force on random queries")
     }
 }

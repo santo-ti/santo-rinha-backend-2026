@@ -84,14 +84,13 @@ class IvfIndex internal constructor(
         for (d in 0 until dim) codes[d] = quantizeToLogicalCode(query[d])
 
         val knn = s.knn.also { it.reset() }
-        val out = s.out
 
         // Seed: nearest district -> nearest member cell. Scanning it first makes `worst`
         // (the 5th-NN squared distance) tight immediately, so the box prune rejects almost
         // every other cell.
         val seedDistrict = nearestDistrict(codes)
         val seedCell = if (seedDistrict >= 0) nearestCellIn(seedDistrict, codes) else -1
-        if (seedCell >= 0) scanCell(seedCell, codes, knn, out)
+        if (seedCell >= 0) scanCell(seedCell, codes, knn)
         var worst = knn.worst()
 
         // Exact branch-and-bound: visit every district/cell that its box says could still
@@ -101,7 +100,7 @@ class IvfIndex internal constructor(
             for (cell in metaMembers[district]) {
                 if (cell == seedCell) continue
                 if (cellCanContain(codes, cell, worst)) {
-                    scanCell(cell, codes, knn, out)
+                    scanCell(cell, codes, knn)
                     worst = knn.worst()
                 }
             }
@@ -109,18 +108,42 @@ class IvfIndex internal constructor(
         return knn.fraudCount()
     }
 
-    /** SIMD-scan all real points of [cell], offering each (distance², label) to [knn]. */
-    private fun scanCell(cell: Int, codes: IntArray, knn: KNearest, out: LongArray) {
-        val block = BlockDistance.BLOCK
+    /**
+     * Scans all real points of [cell] with a per-dimension early-exit, offering each
+     * surviving (distance², label) to [knn]. For a far point we stop summing as soon as the
+     * partial squared distance reaches the current 5th-NN ([KNearest.worst]): the remaining
+     * dimensions can only add to the sum and [KNearest.offer] rejects anything `>= worst`, so
+     * that point provably cannot enter the top-5 and skipping it leaves the result unchanged
+     * (bit-identical to scanning every dimension). On the exact search's heavy tail most
+     * candidates are far, so the cutoff usually fires after a few of the 14 dimensions — much
+     * cheaper than the SIMD block kernel, which always computes the full distance for all 16
+     * points. Reads int16 codes straight from the SoA-16 [blocks] (dim d of `slot` lives at
+     * `blockBase + d*BLOCK + slot`), so a block stays L1-resident across its points.
+     */
+    private fun scanCell(cell: Int, codes: IntArray, knn: KNearest) {
         var remaining = offsets[cell + 1] - offsets[cell]
         if (remaining == 0) return
+        val block = BlockDistance.BLOCK
         val blkEnd = blockOffsets[cell + 1]
         var blk = blockOffsets[cell]
         while (blk < blkEnd) {
-            BlockDistance.distances(codes, blocks, blk * blockStride, dim, out)
             val slots = if (remaining < block) remaining else block
+            val blockBase = blk * blockStride
             val lbase = blk * block
-            for (slot in 0 until slots) knn.offer(out[slot].toDouble(), blockLabels[lbase + slot])
+            for (slot in 0 until slots) {
+                val worst = knn.worst()
+                var sum = 0L
+                var idx = blockBase + slot
+                var d = 0
+                while (d < dim) {
+                    val diff = (codes[d] - blocks[idx].toInt()).toLong()
+                    sum += diff * diff
+                    if (sum >= worst) break
+                    idx += block
+                    d++
+                }
+                if (d == dim) knn.offer(sum.toDouble(), blockLabels[lbase + slot])
+            }
             remaining -= slots
             blk++
         }
@@ -250,7 +273,6 @@ class IvfIndex internal constructor(
     /** Per-thread reusable scratch — keeps the search hot path allocation-free. */
     private class Scratch(dim: Int, k: Int) {
         val codes = IntArray(dim)
-        val out = LongArray(BlockDistance.BLOCK)
         val knn = KNearest(k)
     }
 }
