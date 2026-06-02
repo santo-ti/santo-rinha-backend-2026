@@ -78,6 +78,15 @@ class IvfIndex internal constructor(
 
     private val scratch = ThreadLocal.withInitial { Scratch(dim, K_NEIGHBORS) }
 
+    /**
+     * Optional work-cap (env `IVF_POINT_CAP`, 0/unset = disabled): abort the branch-and-bound
+     * once this many points have been scanned. The cheap majority of queries finish well under
+     * the cap (still exact, E unchanged); only the dim5-saturated tail hits it and stops early,
+     * trading a guaranteed-exact 5-NN for a much lower p99 tail. Env-tunable on the submission
+     * branch WITHOUT a rebuild — sweep it against previews, restore 0 (exact) to fall back.
+     */
+    private val pointCap = System.getenv("IVF_POINT_CAP")?.toIntOrNull()?.takeIf { it > 0 } ?: Int.MAX_VALUE
+
     override fun nearestFraudCount(query: DoubleArray): Int {
         val s = scratch.get()
         val codes = s.codes
@@ -90,18 +99,23 @@ class IvfIndex internal constructor(
         // every other cell.
         val seedDistrict = nearestDistrict(codes)
         val seedCell = if (seedDistrict >= 0) nearestCellIn(seedDistrict, codes) else -1
-        if (seedCell >= 0) scanCell(seedCell, codes, knn)
+        var points = if (seedCell >= 0) scanCell(seedCell, codes, knn) else 0
         var worst = knn.worst()
 
         // Exact branch-and-bound: visit every district/cell that its box says could still
-        // hold a closer neighbor than the current 5th-NN.
-        for (district in 0 until k1) {
-            if (!districtCanContain(codes, district, worst)) continue
-            for (cell in metaMembers[district]) {
-                if (cell == seedCell) continue
-                if (cellCanContain(codes, cell, worst)) {
-                    scanCell(cell, codes, knn)
-                    worst = knn.worst()
+        // hold a closer neighbor than the current 5th-NN. Stop early if the work-cap is hit.
+        if (points < pointCap) {
+            run {
+                for (district in 0 until k1) {
+                    if (!districtCanContain(codes, district, worst)) continue
+                    for (cell in metaMembers[district]) {
+                        if (cell == seedCell) continue
+                        if (cellCanContain(codes, cell, worst)) {
+                            points += scanCell(cell, codes, knn)
+                            worst = knn.worst()
+                            if (points >= pointCap) return@run
+                        }
+                    }
                 }
             }
         }
@@ -120,9 +134,10 @@ class IvfIndex internal constructor(
      * points. Reads int16 codes straight from the SoA-16 [blocks] (dim d of `slot` lives at
      * `blockBase + d*BLOCK + slot`), so a block stays L1-resident across its points.
      */
-    private fun scanCell(cell: Int, codes: IntArray, knn: KNearest) {
-        var remaining = offsets[cell + 1] - offsets[cell]
-        if (remaining == 0) return
+    private fun scanCell(cell: Int, codes: IntArray, knn: KNearest): Int {
+        val count = offsets[cell + 1] - offsets[cell]
+        if (count == 0) return 0
+        var remaining = count
         val block = BlockDistance.BLOCK
         val blkEnd = blockOffsets[cell + 1]
         var blk = blockOffsets[cell]
@@ -147,6 +162,7 @@ class IvfIndex internal constructor(
             remaining -= slots
             blk++
         }
+        return count
     }
 
     /** Nearest district (level-1 meta-centroid) to [codes], or -1 if there are none. */
