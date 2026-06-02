@@ -18,19 +18,21 @@ COPY src ./src
 # JVM fat jar (used for the index builder tool and the agent run), then the index.
 RUN ./gradlew --no-daemon buildFatJar
 # Build the IVF index over the FULL 3M reference set with EXACT bbox search. IVF
-# partitions the 3M into k=4096 coarse cells, then SPLITS any cell > IVF_MAX_CELL=128
-# points by a local sub-k-means (santannaf's MAX_CLUSTER_SIZE) → ~49k small cells with
+# partitions the 3M into k=4096 coarse cells, then SPLITS any cell > IVF_MAX_CELL=256
+# points by a local sub-k-means (santannaf's MAX_CLUSTER_SIZE) → ~25k small cells with
 # tight bounding boxes; those are clustered into k1=128 districts. The runtime search is
 # EXACT branch-and-bound (search.IvfIndex): it visits only the cells whose box could
-# hold a closer neighbor, so it reproduces brute-force top-5 (ZERO routing error) while
-# the small/tight cells keep the scanned-point cost low even on the dim5-saturated tail
-# (offline over 3M randomized-date queries: E=0, points mean 1.96k / p99 8.9k — below the
-# #7644 ~9k that ran p99 5.6ms). NPROBE is IGNORED by the exact search (env/format compat
-# only). ~94MB artifact, fits the 120m heap (v1.7.0's 88MB ran with 0 http_errors).
+# hold a closer neighbor, so it reproduces brute-force top-5 (ZERO routing error). The
+# cell scan uses a per-dimension early-exit (v1.9.0) — far candidates are dropped after a
+# few of the 14 dims — so the dim5-saturated tail stays cheap without going finer than 256
+# (split 128 was tried in v1.8.0 and REGRESSED p99 to 23.6ms: ~2x more cells added more
+# routing cost than the tighter boxes saved — #7840). Offline over 3M: E=0, points mean
+# 3.4k / p99 16.6k. NPROBE is IGNORED by the exact search (env/format compat only).
+# ~88MB artifact, fits the 120m heap (ran with 0 http_errors at v1.7.0).
 ARG INDEX_MAX_SIZE=3000000
 # -Xmx5g: parsing+building the 3M index peaks ~1.5GB; 5g is safe on a 7GB CI runner.
 # IVF_PARALLELISM unset here => the k-means uses every CI core for the fastest build.
-RUN IVF_META_CELLS=128 IVF_MAX_CELL=128 java -Xmx5g --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.tools.BuildIndexKt /refs.json.gz index.bin $INDEX_MAX_SIZE
+RUN IVF_META_CELLS=128 IVF_MAX_CELL=256 java -Xmx5g --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.tools.BuildIndexKt /refs.json.gz index.bin $INDEX_MAX_SIZE
 
 # Capture native-image reachability metadata by exercising the app on the JVM with
 # the tracing agent (covers Ktor CIO's reflective AtomicReferenceFieldUpdater fields).

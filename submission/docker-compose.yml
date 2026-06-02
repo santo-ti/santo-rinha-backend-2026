@@ -4,12 +4,14 @@
 # replaced with the freshly published, immutable tag by
 # .github/workflows/publish-submission.yml when it materializes the branch.
 #
-# v1.7.0: EXACT bbox branch-and-bound search over a cell-split IVF index (santannaf's
-# algorithm) → ZERO routing error (det maxed) at low scanned-point cost (offline over
-# 3M randomized-date queries: E=0, points mean 3.4k / p99 16.6k). NPROBE is IGNORED by
-# the exact search, so it is not set here. LB is HAProxy in TCP mode (the proven 4777
-# infra) — UDS was tried in v1.6.0 and FAILED the contest health check ("No status"),
-# so the API speaks plain TCP on :8080 and HAProxy forwards bytes.
+# v1.9.0: EXACT bbox branch-and-bound search over a cell-split IVF index (split cap 256,
+# santannaf's algorithm) → ZERO routing error (det maxed at 3000). The cell scan now uses
+# a per-dimension early-exit (drops far candidates after a few of the 14 dims) to cut the
+# exact-search p99 tail while keeping the result bit-identical (E=0). Split 128 was tried
+# in v1.8.0 and REGRESSED p99 (more cells = more routing cost than tighter boxes saved),
+# so we stay at 256. NPROBE is IGNORED by the exact search, so it is not set here. LB is
+# HAProxy in TCP mode (the proven 4777 infra) — UDS was tried in v1.6.0 and FAILED the
+# contest health check ("No status"), so the API speaks plain TCP and HAProxy forwards bytes.
 x-api: &api
   image: __IMAGE_REF__
   networks:
