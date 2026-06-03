@@ -40,6 +40,17 @@ RUN printf '%s' '{"id":"tx-1","transaction":{"amount":41.12,"installments":2,"re
  && sleep 3 \
  && echo "--- generated native-config ---" && ls -la /app/native-config
 
+# Second agent pass on the NIO engine (SERVER_ENGINE=nio): captures the virtual-thread +
+# ServerSocketChannel reachability the Ktor pass misses, merged into the same config so the
+# native binary works under either engine. The submission runs SERVER_ENGINE=nio.
+RUN ( SERVER_ENGINE=nio INDEX_PATH=/app/index.bin java -agentlib:native-image-agent=config-merge-dir=/app/native-config --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.bootstrap.MainKt & echo $! > /tmp/app2.pid ) \
+ && for i in $(seq 1 40); do curl -sf -o /dev/null http://localhost:8080/ready && break || sleep 1; done \
+ && curl -s -X POST http://localhost:8080/fraud-score -H "Content-Type: application/json" -d @/tmp/p.json > /dev/null || true \
+ && sleep 1 \
+ && kill -TERM "$(cat /tmp/app2.pid)" || true \
+ && sleep 2 \
+ && echo "--- merged NIO native-config ---"
+
 # Supplement the agent metadata with a hand-written reflect-config (kept in a late
 # layer so iterating on it only re-runs nativeCompile, not the index/agent steps).
 COPY native-config/manual-reflect-config.json /app/native-config/manual-reflect-config.json
@@ -56,5 +67,8 @@ ENV INDEX_PATH=/app/index.bin
 # IVF exact search needs no recall knob. IVF_POINT_CAP (search.IvfIndex) is an optional
 # runtime work-cap (unset = fully exact, 0 errors) — sweep it on the submission branch to
 # trade the saturated tail for p99 without a rebuild; leave unset to keep the 0-error path.
+# Hand-rolled HTTP/1.1 server (virtual threads, no Ktor on the hot path) — the request-edge p99
+# win. Unset SERVER_ENGINE to fall back to Ktor CIO.
+ENV SERVER_ENGINE=nio
 EXPOSE 8080
 ENTRYPOINT ["/app/rinha-server"]
