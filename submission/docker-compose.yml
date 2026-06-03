@@ -4,18 +4,23 @@
 # replaced with the freshly published, immutable tag by
 # .github/workflows/publish-submission.yml when it materializes the branch.
 #
-# v1.9.0: EXACT bbox branch-and-bound search over a cell-split IVF index (split cap 256,
-# santannaf's algorithm) → ZERO routing error (det maxed at 3000). The cell scan now uses
-# a per-dimension early-exit (drops far candidates after a few of the 14 dims) to cut the
-# exact-search p99 tail while keeping the result bit-identical (E=0). Split 128 was tried
-# in v1.8.0 and REGRESSED p99 (more cells = more routing cost than tighter boxes saved),
-# so we stay at 256. NPROBE is IGNORED by the exact search, so it is not set here. LB is
-# HAProxy in TCP mode (the proven 4777 infra) — UDS was tried in v1.6.0 and FAILED the
-# contest health check ("No status"), so the API speaks plain TCP and HAProxy forwards bytes.
+# Search: EXACT bbox branch-and-bound over a cell-split IVF index (split cap 256) → ZERO
+# routing error (det maxed at 3000), with a per-dimension early-exit on the cell scan to cut
+# the p99 tail (bit-identical, E=0). NPROBE is ignored by the exact search.
+#
+# Transport (RETRY of UDS): HAProxy reaches each API over a Unix domain socket on the shared
+# `sockets` volume, skipping the TCP/IP stack on the LB→API hop. v1.6.0's UDS attempt failed
+# the contest health check ("No status"); the likely cause was the socket's default ~0755
+# perms refusing HAProxy's connect — the API entrypoint now chmod 0666's the socket once Ktor
+# binds it (and removes any stale socket). MUST be validated locally (docker compose up + curl)
+# before submitting: a transport regression here scores nothing. TCP fallback = drop the
+# `sockets` volume + `SERVER_SOCKET_PATH` and point haproxy.cfg back at `api-N:8080`.
 x-api: &api
   image: __IMAGE_REF__
   networks:
     - rinha
+  volumes:
+    - sockets:/sockets
   deploy:
     resources:
       limits:
@@ -25,9 +30,13 @@ x-api: &api
 services:
   api-1:
     <<: *api
+    environment:
+      SERVER_SOCKET_PATH: /sockets/api1.sock
 
   api-2:
     <<: *api
+    environment:
+      SERVER_SOCKET_PATH: /sockets/api2.sock
 
   lb:
     image: haproxy:2.9-alpine
@@ -38,6 +47,7 @@ services:
       - "9999:9999"
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - sockets:/sockets
     networks:
       - rinha
     deploy:
@@ -45,6 +55,9 @@ services:
         limits:
           cpus: "0.10"
           memory: "30MB"
+
+volumes:
+  sockets:
 
 networks:
   rinha:

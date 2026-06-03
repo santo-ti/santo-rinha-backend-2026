@@ -52,9 +52,12 @@ FROM --platform=linux/amd64 oraclelinux:9-slim AS runtime
 WORKDIR /app
 COPY --from=builder /app/build/native/nativeCompile/rinha-server /app/rinha-server
 COPY --from=builder /app/index.bin /app/index.bin
+COPY docker/entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
 ENV INDEX_PATH=/app/index.bin
 # IVF exact search needs no recall knob. IVF_POINT_CAP (search.IvfIndex) is an optional
 # runtime work-cap (unset = fully exact, 0 errors) — sweep it on the submission branch to
 # trade the saturated tail for p99 without a rebuild; leave unset to keep the 0-error path.
 EXPOSE 8080
-ENTRYPOINT ["/app/rinha-server"]
+# entrypoint binds TCP (no SERVER_SOCKET_PATH) or a chmod-0666 Unix socket (UDS topology).
+ENTRYPOINT ["/app/entrypoint.sh"]
