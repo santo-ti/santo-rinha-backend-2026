@@ -44,6 +44,30 @@ fun main(args: Array<String>) {
 
     val oracle = OfficialOracle(fraudRatio = fraudRatio)
     val queries = Array(numQueries) { oracle.nextVector() }
+
+    // capval: validate a work-cap against the UNCAPPED exact search (the E=0 reference) over
+    // many queries — no gold file needed. Counts cap-induced decision flips (the true cap
+    // error at this scale) + reports the capped WORK COST. Use to pick a cap safe at 54100.
+    if (mode == "capval") {
+        val cap = np1
+        val flips = java.util.concurrent.atomic.AtomicInteger()
+        val capWork = LongArray(numQueries)
+        val pool0 = ForkJoinPool(parallelism)
+        pool0.submit {
+            IntStream.range(0, numQueries).parallel().forEach { qi ->
+                val exactR = probe.search(queries[qi])
+                val capR = probe.searchCapped(queries[qi], cap)
+                if ((exactR.fraud >= 3) != (capR.fraud >= 3)) flips.incrementAndGet()
+                capWork[qi] = capR.routeDimOps + (capR.pointsScanned.toLong() * index.dim) * 10 / 65
+            }
+        }.get()
+        pool0.shutdown()
+        println()
+        println("CAP VALIDATION cap=$cap over $numQueries queries (vs uncapped exact, the E=0 ref):")
+        println("  decision flips (cap-induced errors): ${flips.get()}  (rate ${"%.5f".format(flips.get().toDouble() / numQueries)})")
+        println("  capped WORK COST/query: mean=${mean(capWork)}  p99=${p99(capWork)}")
+        return
+    }
     val gold = DataInputStream(File(goldPath).inputStream().buffered()).use { inp -> IntArray(inp.readInt()) { inp.readInt() } }
     require(gold.size >= numQueries) { "gold has ${gold.size} entries < $numQueries queries" }
 
@@ -59,6 +83,7 @@ fun main(args: Array<String>) {
             val r = when (mode) {
                 "bf" -> probe.searchBestFirst(queries[qi])
                 "approx" -> probe.searchApprox(queries[qi], np1, np2)
+                "cap" -> probe.searchCapped(queries[qi], np1)   // np1 = points budget
                 else -> probe.search(queries[qi])
             }
             val pred = r.fraud >= 3
@@ -153,6 +178,47 @@ private class ExactBboxProbe(private val index: dev.santo.search.IvfIndex) {
         for (district in 0 until k1) {
             if (!boxCanContain(codes, distMin, distMax, district * dim, worst, acc)) continue
             for (cell in members[district]) {
+                if (cell == seedCell) continue
+                if (boxCanContain(codes, cellMin, cellMax, cell * dim, worst, acc)) {
+                    points += scanCell(cell, codes, bestSq, bestFraud)
+                    cellsScanned++
+                    worst = bestSq[K_NEIGHBORS - 1]
+                }
+            }
+        }
+        var f = 0; for (i in 0 until K_NEIGHBORS) if (bestFraud[i]) f++
+        return ProbeResult(f, points, cellsScanned, acc[0])
+    }
+
+    /**
+     * Work-CAPPED exact search: the current exact branch-and-bound, but ABORT once [cap]
+     * points have been scanned. The cheap majority of queries finish exactly (well under the
+     * cap → E=0 for them); only the dim5-saturated tail hits the cap and stops early, possibly
+     * missing a near-equidistant neighbor (small E). Caps the p99 WORK COST (the tail) → low
+     * p99, trading a guaranteed-exact result for E≈0 (santannaf-style early-stop). Sweep [cap]
+     * to find the knee: lowest cap that keeps E tiny.
+     */
+    fun searchCapped(query: DoubleArray, cap: Int): ProbeResult {
+        val codes = IntArray(dim) { quantizeToLogicalCode(query[it]) }
+        val bestSq = DoubleArray(K_NEIGHBORS) { Double.MAX_VALUE }
+        val bestFraud = BooleanArray(K_NEIGHBORS)
+        var points = 0
+        var cellsScanned = 0
+        val acc = LongArray(1)
+
+        val seedDistrict = nearestDistrict(codes)
+        acc[0] += k1.toLong() * dim
+        val seedCell = if (seedDistrict >= 0) nearestCellIn(seedDistrict, codes) else -1
+        if (seedDistrict >= 0) acc[0] += members[seedDistrict].size.toLong() * dim
+        if (seedCell >= 0) { points += scanCell(seedCell, codes, bestSq, bestFraud); cellsScanned++ }
+        var worst = bestSq[K_NEIGHBORS - 1]
+
+        var capped = false
+        for (district in 0 until k1) {
+            if (capped) break
+            if (!boxCanContain(codes, distMin, distMax, district * dim, worst, acc)) continue
+            for (cell in members[district]) {
+                if (points >= cap) { capped = true; break }
                 if (cell == seedCell) continue
                 if (boxCanContain(codes, cellMin, cellMax, cell * dim, worst, acc)) {
                     points += scanCell(cell, codes, bestSq, bestFraud)

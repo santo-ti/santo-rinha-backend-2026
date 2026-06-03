@@ -15,3 +15,9 @@ internal const val INDEX_MAGIC = 0x46534932
  * artifact each fail fast if fed to the wrong reader.
  */
 internal const val IVF_MAGIC = 0x49564633
+
+/**
+ * Magic header for the KD-tree artifact ("KDT1"). Distinct from [IVF_MAGIC] so [dev.santo.bootstrap.IndexLoader]
+ * can sniff the format and load the right index (KD-tree branch-and-bound vs IVF).
+ */
+internal const val KDTREE_MAGIC = 0x4B445431

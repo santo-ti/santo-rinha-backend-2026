@@ -4,6 +4,9 @@ import dev.santo.search.DEFAULT_NPROBE1
 import dev.santo.search.DEFAULT_NPROBE2
 import dev.santo.search.IndexState
 import dev.santo.search.IvfReader
+import dev.santo.search.KDTREE_MAGIC
+import dev.santo.search.KdTreeReader
+import java.io.DataInputStream
 import java.io.File
 
 /**
@@ -36,9 +39,15 @@ object IndexLoader {
         }
         try {
             val startedAt = System.nanoTime()
-            val index = file.inputStream().buffered().use { IvfReader.readFrom(it, np1, np2) }
+            val index = file.inputStream().buffered().use { stream ->
+                stream.mark(4)
+                val magic = DataInputStream(stream).readInt()
+                stream.reset()
+                if (magic == KDTREE_MAGIC) KdTreeReader.readFrom(stream)
+                else IvfReader.readFrom(stream, np1, np2)
+            }
             state.publish(index)
-            println("IVF index loaded from $path in ${(System.nanoTime() - startedAt) / 1_000_000} ms (nprobe1=$np1 nprobe2=$np2)")
+            println("Index loaded from $path in ${(System.nanoTime() - startedAt) / 1_000_000} ms")
         } catch (error: Exception) {
             System.err.println("Failed to load index artifact at $path: ${error.message}")
         }

@@ -115,6 +115,26 @@ tasks.register<JavaExec>("exactProbe") {
     (project.findProperty("args") as String?)?.let { args = it.trim().split(" ") }
 }
 
+// Local KD-tree index build (for an end-to-end server smoke before the native image build).
+tasks.register<JavaExec>("buildKd") {
+    group = "verification"
+    description = "Build a KD-tree index artifact from the 3M references."
+    mainClass.set("dev.santo.tools.BuildKdTreeKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    maxHeapSize = "6g"
+    (project.findProperty("args") as String?)?.let { args = it.trim().split(" ") }
+}
+
+// Offline KD-tree de-risk: build a KD-tree over N refs, verify E=0 + measure visited nodes.
+tasks.register<JavaExec>("kdProbe") {
+    group = "verification"
+    description = "Build a KD-tree and verify exact (E=0) + measure visited nodes (p99 proxy)."
+    mainClass.set("dev.santo.tools.KdProbeKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    maxHeapSize = "10g"
+    (project.findProperty("args") as String?)?.let { args = it.trim().split(" ") }
+}
+
 // Offline measurement of two-level (district→cell) IVF routing (never shipped).
 tasks.register<JavaExec>("ivfTwoLevel") {
     group = "verification"
@@ -160,7 +180,7 @@ graalvmNative {
         // Cap the heap so the ~90MB resident index plus per-request churn never races
         // the 160MB cgroup limit against off-heap/code/stacks (the plain JVM OOM-killed
         // here; see CLAUDE.md). Leaves ~40MB headroom inside the limit.
-        buildArgs.add("-R:MaxHeapSize=120m")
+        buildArgs.add("-R:MaxHeapSize=130m")
         // Fully optimized final image (was true — see -O3 above).
         quickBuild.set(false)
     }
