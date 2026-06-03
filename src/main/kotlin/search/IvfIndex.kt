@@ -87,6 +87,17 @@ class IvfIndex internal constructor(
      */
     private val pointCap = System.getenv("IVF_POINT_CAP")?.toIntOrNull()?.takeIf { it > 0 } ?: Int.MAX_VALUE
 
+    /**
+     * Optional SIMD cell scan (env `IVF_SIMD_SCAN=1`): compute all 16 points of a block at once
+     * via [BlockDistance] (full 14-dim, no per-dimension early-exit) instead of the scalar
+     * early-exit loop. Bit-identical result (same squared distances → same k-NN), so detection
+     * is unchanged. The scalar path early-exits cheaply when points are far; SIMD wins on the
+     * dim-saturated p99 tail where points are close and early-exit barely fires. A/B via the env
+     * (no rebuild); default off keeps the proven scalar path.
+     */
+    @Volatile
+    internal var simdScan = System.getenv("IVF_SIMD_SCAN") == "1"
+
     override fun nearestFraudCount(query: DoubleArray): Int {
         val s = scratch.get()
         val codes = s.codes
@@ -99,7 +110,7 @@ class IvfIndex internal constructor(
         // every other cell.
         val seedDistrict = nearestDistrict(codes)
         val seedCell = if (seedDistrict >= 0) nearestCellIn(seedDistrict, codes) else -1
-        var points = if (seedCell >= 0) scanCell(seedCell, codes, knn) else 0
+        var points = if (seedCell >= 0) scanCell(seedCell, codes, knn, s.out) else 0
         var worst = knn.worst()
 
         // Exact branch-and-bound: visit every district/cell that its box says could still
@@ -111,7 +122,7 @@ class IvfIndex internal constructor(
                     for (cell in metaMembers[district]) {
                         if (cell == seedCell) continue
                         if (cellCanContain(codes, cell, worst)) {
-                            points += scanCell(cell, codes, knn)
+                            points += scanCell(cell, codes, knn, s.out)
                             worst = knn.worst()
                             if (points >= pointCap) return@run
                         }
@@ -134,13 +145,26 @@ class IvfIndex internal constructor(
      * points. Reads int16 codes straight from the SoA-16 [blocks] (dim d of `slot` lives at
      * `blockBase + d*BLOCK + slot`), so a block stays L1-resident across its points.
      */
-    private fun scanCell(cell: Int, codes: IntArray, knn: KNearest): Int {
+    private fun scanCell(cell: Int, codes: IntArray, knn: KNearest, out: LongArray): Int {
         val count = offsets[cell + 1] - offsets[cell]
         if (count == 0) return 0
         var remaining = count
         val block = BlockDistance.BLOCK
         val blkEnd = blockOffsets[cell + 1]
         var blk = blockOffsets[cell]
+        if (simdScan) {
+            // SIMD: full 14-dim squared distance for all 16 points of the block at once. Same
+            // squared distances as the scalar loop → KNearest sees identical candidates → exact.
+            while (blk < blkEnd) {
+                val slots = if (remaining < block) remaining else block
+                BlockDistance.distances(codes, blocks, blk * blockStride, dim, out)
+                val lbase = blk * block
+                for (slot in 0 until slots) knn.offer(out[slot].toDouble(), blockLabels[lbase + slot])
+                remaining -= slots
+                blk++
+            }
+            return count
+        }
         while (blk < blkEnd) {
             val slots = if (remaining < block) remaining else block
             val blockBase = blk * blockStride
@@ -290,5 +314,6 @@ class IvfIndex internal constructor(
     private class Scratch(dim: Int, k: Int) {
         val codes = IntArray(dim)
         val knn = KNearest(k)
+        val out = LongArray(BlockDistance.BLOCK) // SIMD per-block distance scratch
     }
 }

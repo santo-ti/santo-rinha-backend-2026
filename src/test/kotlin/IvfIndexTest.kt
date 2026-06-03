@@ -90,6 +90,26 @@ class IvfIndexTest {
     }
 
     /**
+     * The SIMD cell scan (IVF_SIMD_SCAN) computes the full 14-dim squared distance for all 16
+     * points of a block at once — it must yield the exact same fraud count as the scalar
+     * early-exit path (same squared distances → same top-5). Validated on the example corpus
+     * and randomized queries (incl. the -1.0 sentinel) against the quantized brute force.
+     */
+    @Test
+    fun `SIMD cell scan matches the scalar path and the quantized oracle`() {
+        val simd = IvfBuilder.build(references, k = k, metaCells = k, nprobe1 = k, nprobe2 = k)
+            .also { it.simdScan = true }
+        val rng = Random(4321)
+        val dim = references.first().vector.size
+        var mismatches = 0
+        val qs = queries() + List(2000) { DoubleArray(dim) { if (rng.nextInt(15) == 0) -1.0 else rng.nextDouble() } }
+        for (q in qs) {
+            if (simd.nearestFraudCount(q) != quantizedOracle.nearestFraudCount(q)) mismatches++
+        }
+        assertEquals(0, mismatches, "SIMD cell scan diverged from the quantized brute force")
+    }
+
+    /**
      * The per-dimension early-exit in the cell scan must stay bit-exact: it only skips
      * points whose partial squared distance has already reached the current 5th-NN (which
      * `offer` would reject anyway), so the top-5 — and the fraud count — is identical to a
