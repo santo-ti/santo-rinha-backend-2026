@@ -35,6 +35,9 @@ class RawHttpServer(
     internal fun serve(server: ServerSocketChannel) {
         while (true) {
             val channel = server.accept()
+            // Disable Nagle: without it, our small pre-rendered responses sit ~40ms waiting to
+            // coalesce with delayed ACKs — the cause of the 73ms p99 in v1.13.0. No-op on UNIX.
+            try { channel.setOption(java.net.StandardSocketOptions.TCP_NODELAY, true) } catch (_: Throwable) {}
             Thread.startVirtualThread { handleConnection(channel) }
         }
     }
