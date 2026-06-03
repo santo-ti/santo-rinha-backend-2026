@@ -17,15 +17,17 @@ COPY src ./src
 
 # JVM fat jar (used for the index builder tool and the agent run), then the index.
 RUN ./gradlew --no-daemon buildFatJar
-# Build a KD-tree over the FULL 3M reference set (arthurd3's algorithm, rank ~33). The
-# runtime search is a best-first branch-and-bound (search.KdTreeIndex) with a visit budget
-# (KD_VISIT_BUDGET): no routing phase, each visit is one distance with early-exit, so it
-# reaches the true 5-NN in few visits → low p99. At budget 10000 it is E=0 offline over 3M
-# (visits ~9k, FLAT — no tail), beating the IVF's 16.6k-point exact tail (17.5ms). ~99MB
-# artifact (nodeVec int16 84MB + packed 12MB + labels), fits the 120m heap.
+# Build the IVF index over the FULL 3M reference set with EXACT bbox branch-and-bound
+# (search.IvfIndex): k=4096 coarse cells, any cell > IVF_MAX_CELL=256 split for tighter
+# boxes, k1=128 districts. The search visits only the cells whose AABB could still hold a
+# closer neighbor than the current 5th-NN → equals a full brute-force top-5 (zero routing
+# miss) while touching only a few cells/query (offline over 3M: E=0, p99 ~16.6k points →
+# 18.5ms, 0 errors at #7882/#7978). NPROBE is ignored by the exact search (format compat).
+# (The KD-tree builder/search remain in the repo — BuildKdTreeKt — as an offline spike; the
+# best-first BBF saturated under load at 14 dims, see .docs/santannaf-analysis.md.)
 ARG INDEX_MAX_SIZE=3000000
-# -Xmx5g: parsing the 3M refs peaks ~1.5GB; the KD-tree build is single-threaded (~2s).
-RUN java -Xmx5g --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.tools.BuildKdTreeKt /refs.json.gz index.bin $INDEX_MAX_SIZE
+# -Xmx5g: parsing the 3M refs peaks ~1.5GB; IVF_PARALLELISM unset => k-means uses all cores.
+RUN IVF_META_CELLS=128 IVF_MAX_CELL=256 java -Xmx5g --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.tools.BuildIndexKt /refs.json.gz index.bin $INDEX_MAX_SIZE
 
 # Capture native-image reachability metadata by exercising the app on the JVM with
 # the tracing agent (covers Ktor CIO's reflective AtomicReferenceFieldUpdater fields).
@@ -51,9 +53,8 @@ WORKDIR /app
 COPY --from=builder /app/build/native/nativeCompile/rinha-server /app/rinha-server
 COPY --from=builder /app/index.bin /app/index.bin
 ENV INDEX_PATH=/app/index.bin
-# KD-tree visit budget: 10000 → E=0 offline over 3M at ~9k visits (flat, no tail). Pure
-# runtime lever — tunable on the submission branch without a rebuild (lower = faster/less
-# exact, higher = exact/slower). 0 disables the cap (full exact, high-dim → near brute force).
-ENV KD_VISIT_BUDGET=10000
+# IVF exact search needs no recall knob. IVF_POINT_CAP (search.IvfIndex) is an optional
+# runtime work-cap (unset = fully exact, 0 errors) — sweep it on the submission branch to
+# trade the saturated tail for p99 without a rebuild; leave unset to keep the 0-error path.
 EXPOSE 8080
 ENTRYPOINT ["/app/rinha-server"]

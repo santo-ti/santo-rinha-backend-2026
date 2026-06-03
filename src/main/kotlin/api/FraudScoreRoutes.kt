@@ -1,7 +1,6 @@
 package dev.santo.api
 
 import dev.santo.bootstrap.AppComponents
-import dev.santo.dto.FraudScoreRequest
 import dev.santo.fraud.FraudDetectorService
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
@@ -10,11 +9,6 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.coroutines.CancellationException
-import kotlinx.serialization.json.Json
-
-// Explicit, compile-time serializers (no reflection, no ContentNegotiation) — leaner
-// on the hot path and friendly to GraalVM native-image.
-private val json = Json { ignoreUnknownKeys = true }
 
 fun Application.configureRouting(components: AppComponents) {
     routing {
@@ -33,8 +27,9 @@ fun Application.configureFraudScore(service: FraudDetectorService) {
     routing {
         post("/fraud-score") {
             val body: ByteArray = try {
-                val request = json.decodeFromString(FraudScoreRequest.serializer(), call.receiveText())
-                FraudResponses.forCount(service.fraudCountOf(request))
+                // Raw bytes → byte-scan vectorizer (no String/DTO/ContentNegotiation allocation).
+                val bytes = call.receive<ByteArray>()
+                FraudResponses.forCount(service.fraudCountOf(bytes, bytes.size))
             } catch (cancellation: CancellationException) {
                 throw cancellation
             } catch (error: Throwable) {

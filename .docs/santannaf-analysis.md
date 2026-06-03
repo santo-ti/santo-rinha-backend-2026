@@ -7,6 +7,18 @@ stack, and rank what to port next to reach **top-50 with Kotlin**.
 
 > Source read at HEAD `be7b8e1`. This is a living doc — update it as we port items.
 
+## KD-tree post-mortem (v1.11.0 — REVERTED)
+
+v1.11.0 shipped arthurd3's best-first KD-tree BBF (`search.KdTreeIndex`) at `KD_VISIT_BUDGET=10000`.
+Official #8100: **p99 1515ms, 289 http_errors, score 384** (vs IVF #7882/#7978: 18.5ms, 0 err, 4734).
+Root cause: in 14 dims the per-split-dim slab bound prunes almost nothing, so (a) at budget 10k the
+search is *inexact* (10 FP + 8 FN — offline E=0 was sample bias), and (b) best-first is a random-access
+walk over the 84MB node array → every visit a cache miss → ~3-4× the per-query CPU of the IVF's
+*sequential* cell scan → ρ≈1 at 450 RPS/0.45 CPU → saturation → 289 timeouts (E weight 5× = 1445 of
+1479). No budget gives 0-error AND low p99: the two failure modes are coupled and fundamental. The IVF
+exact search dominates it on both axes. **Production reverted to IVF** (Dockerfile builds `BuildIndexKt`);
+the KD-tree builder/search stay in the repo as an offline spike only.
+
 ## Critical meta-findings (these correct earlier assumptions)
 
 1. **His winning path is SCALAR, not SIMD.** The Vector API path was *reverted* — under
@@ -78,14 +90,18 @@ Ktor (§3) and write bytes to the socket directly.
 **But `MMAP=false` in the winning config** — the int16 `.idx` is heap-resident like ours. Can't
 `madvise` a GC array anyway. Superseded technique; skip unless we move the index off-heap.
 
-### 6. Zero-alloc vectorizer — ❌ GAP (highest p99-tail win)
+### 6. Zero-alloc vectorizer — ✅ PORTED (DTO-free byte-scan)
 `SchemaAwareVectorizationStrategy`: byte-by-byte JSON→`double[14]`, no String/Map/parser.
 Hand-rolled float parse, Sakamoto day-of-week + Hinnant days-from-civil for dates, byte-scan
 `known_merchants` membership, `clamp01` with 4-decimal quantization to match the reference. ~4µs.
-**We use kotlinx.serialization** → allocates a DTO tree per request → GC pressure → p99 tail.
-Porting this byte-scan vectorizer to Kotlin is medium effort, **removes per-request allocation**,
-and pairs with §3 (shared single-threaded scratch). Watch: float-parse + 4-decimal clamp must
-match the reference exactly or we reintroduce detection errors.
+**We had kotlinx.serialization** → allocated a DTO tree per request → GC pressure → p99 tail.
+**Ported as `vectorization.ByteVectorizer`** (route now reads `call.receive<ByteArray>()` → byte-scan
+→ pooled per-thread scratch, no DTO/List/String-field graph). To sidestep the float-parse risk the
+analysis warned about, numbers are parsed via the SAME `Double.parseDouble` on the exact numeric
+substring (bit-identical doubles by construction); `ByteVectorizerTest` pins that the QUANTIZED int16
+codes match the DTO path on every example payload (compact + pretty), so 0-error is preserved. Only
+the `mcc` lookup key still allocates a tiny String. A fully-zero-alloc float parser + a byte-keyed mcc
+table are the remaining micro-opts; they need a correctly-rounded parser to stay exact.
 
 ### 7. Build & runtime — ✅ MOSTLY HAVE; PGO is greenfield
 `-march=x86-64-v3`, `--add-modules=jdk.incubator.vector`, native-image, tracing-agent metadata,
