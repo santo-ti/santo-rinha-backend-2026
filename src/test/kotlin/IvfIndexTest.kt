@@ -96,6 +96,22 @@ class IvfIndexTest {
      * and randomized queries (incl. the -1.0 sentinel) against the quantized brute force.
      */
     @Test
+    fun `approximate search at nprobe=k visits all cells and equals brute force`() {
+        val approx = IvfBuilder.build(references, k = k, metaCells = k, nprobe1 = k, nprobe2 = k)
+            .also { it.approxNprobe = k } // visiting all k cells = exact
+        var mismatches = 0
+        for (q in queries()) if (approx.nearestFraudCount(q) != quantizedOracle.nearestFraudCount(q)) mismatches++
+        assertEquals(0, mismatches, "approximate at nprobe=k diverged from brute force")
+    }
+
+    @Test
+    fun `approximate search yields valid fraud counts at a small nprobe`() {
+        val approx = IvfBuilder.build(references, k = k, metaCells = k, nprobe1 = k, nprobe2 = k)
+            .also { it.approxNprobe = 1 }
+        for (q in queries()) assertTrue(approx.nearestFraudCount(q) in 0..5)
+    }
+
+    @Test
     fun `SIMD cell scan matches the scalar path and the quantized oracle`() {
         val simd = IvfBuilder.build(references, k = k, metaCells = k, nprobe1 = k, nprobe2 = k)
             .also { it.simdScan = true }

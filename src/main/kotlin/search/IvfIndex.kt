@@ -98,12 +98,26 @@ class IvfIndex internal constructor(
     @Volatile
     internal var simdScan = System.getenv("IVF_SIMD_SCAN") == "1"
 
+    /**
+     * Optional APPROXIMATE search (env `IVF_NPROBE` > 0): instead of the exact bbox
+     * branch-and-bound (which visits every cell that could hold a closer neighbor — the source
+     * of the saturated-tail p99), visit only the [approxNprobe] cells nearest the query by
+     * centroid distance, then stop. Bounds work uniformly → low, flat p99 (v1.4.0 ran 5.6ms
+     * this way). It can miss a true neighbor in an unvisited cell (a few FP/FN), but the contest
+     * scoring rewards the p99 win more than the last bit of detection (v1.4.0's 4777 > the exact
+     * path's ~4760). Sweep IVF_NPROBE on the submission to find the score knee. 0 = exact.
+     */
+    @Volatile
+    internal var approxNprobe = (System.getenv("IVF_NPROBE")?.toIntOrNull() ?: 0).coerceIn(0, MAX_NPROBE)
+
     override fun nearestFraudCount(query: DoubleArray): Int {
         val s = scratch.get()
         val codes = s.codes
         for (d in 0 until dim) codes[d] = quantizeToLogicalCode(query[d])
 
         val knn = s.knn.also { it.reset() }
+
+        if (approxNprobe > 0) return approximate(codes, knn, s)
 
         // Seed: nearest district -> nearest member cell. Scanning it first makes `worst`
         // (the 5th-NN squared distance) tight immediately, so the box prune rejects almost
@@ -130,6 +144,33 @@ class IvfIndex internal constructor(
                 }
             }
         }
+        return knn.fraudCount()
+    }
+
+    /**
+     * Approximate search: scan only the [approxNprobe] cells whose centroid is nearest the
+     * query, then return. A bounded top-N selection over the [k] centroids (track the current
+     * max slot, replace it when a nearer cell arrives), then scan the survivors.
+     */
+    private fun approximate(codes: IntArray, knn: KNearest, s: Scratch): Int {
+        val np = approxNprobe
+        val cand = s.cand
+        val candD = s.candD
+        var n = 0
+        var maxPos = 0
+        for (c in 0 until k) {
+            val d = distSq(codes, centroids, c * dim)
+            if (n < np) {
+                cand[n] = c; candD[n] = d
+                if (d > candD[maxPos]) maxPos = n
+                n++
+            } else if (d < candD[maxPos]) {
+                cand[maxPos] = c; candD[maxPos] = d
+                maxPos = 0
+                for (i in 1 until np) if (candD[i] > candD[maxPos]) maxPos = i
+            }
+        }
+        for (i in 0 until n) scanCell(cand[i], codes, knn, s.out)
         return knn.fraudCount()
     }
 
@@ -315,5 +356,11 @@ class IvfIndex internal constructor(
         val codes = IntArray(dim)
         val knn = KNearest(k)
         val out = LongArray(BlockDistance.BLOCK) // SIMD per-block distance scratch
+        val cand = IntArray(MAX_NPROBE)          // approximate: nearest-cell candidate ids
+        val candD = DoubleArray(MAX_NPROBE)      // approximate: their centroid distances
+    }
+
+    private companion object {
+        const val MAX_NPROBE = 512
     }
 }

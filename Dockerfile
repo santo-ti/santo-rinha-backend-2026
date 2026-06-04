@@ -56,5 +56,8 @@ ENV INDEX_PATH=/app/index.bin
 # IVF exact search needs no recall knob. IVF_POINT_CAP (search.IvfIndex) is an optional
 # runtime work-cap (unset = fully exact, 0 errors) — sweep it on the submission branch to
 # trade the saturated tail for p99 without a rebuild; leave unset to keep the 0-error path.
+ENV IVF_SIMD_SCAN=1
+# IVF_NPROBE>0 switches to the APPROXIMATE search (visit only the N nearest cells) — v1.4.0's
+# 5.6ms/4777 path. Unset here (= exact); set + sweep on the submission to find the score knee.
 EXPOSE 8080
 ENTRYPOINT ["/app/rinha-server"]
