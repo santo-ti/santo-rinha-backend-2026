@@ -40,6 +40,17 @@ RUN printf '%s' '{"id":"tx-1","transaction":{"amount":41.12,"installments":2,"re
  && sleep 3 \
  && echo "--- generated native-config ---" && ls -la /app/native-config
 
+# Second agent pass over a UNIX socket: captures Ktor CIO's unixConnector reachability (the
+# UDS path the TCP pass above misses — a likely contributor to v1.6.0's "No status"). Merged
+# into the same config so the native binary works on TCP or UDS.
+RUN ( SERVER_SOCKET_PATH=/tmp/agent.sock INDEX_PATH=/app/index.bin java -agentlib:native-image-agent=config-merge-dir=/app/native-config --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.bootstrap.MainKt & echo $! > /tmp/app3.pid ) \
+ && for i in $(seq 1 40); do [ -S /tmp/agent.sock ] && curl -sf --unix-socket /tmp/agent.sock http://localhost/ready && break || sleep 1; done \
+ && curl -s --unix-socket /tmp/agent.sock -X POST http://localhost/fraud-score -H "Content-Type: application/json" -d @/tmp/p.json > /dev/null || true \
+ && sleep 1 \
+ && kill -TERM "$(cat /tmp/app3.pid)" || true \
+ && sleep 2 \
+ && echo "--- merged UDS native-config ---"
+
 # Supplement the agent metadata with a hand-written reflect-config (kept in a late
 # layer so iterating on it only re-runs nativeCompile, not the index/agent steps).
 COPY native-config/manual-reflect-config.json /app/native-config/manual-reflect-config.json
@@ -58,6 +69,8 @@ ENV INDEX_PATH=/app/index.bin
 # IVF exact search needs no recall knob. IVF_POINT_CAP (search.IvfIndex) is an optional
 # runtime work-cap (unset = fully exact, 0 errors) — sweep it on the submission branch to
 # trade the saturated tail for p99 without a rebuild; leave unset to keep the 0-error path.
+# SIMD cell scan on (proven 4766 at #8204, bit-exact); the UDS path is detection-safe too.
+ENV IVF_SIMD_SCAN=1
 EXPOSE 8080
 # entrypoint binds TCP (no SERVER_SOCKET_PATH) or a chmod-0666 Unix socket (UDS topology).
 ENTRYPOINT ["/app/entrypoint.sh"]
