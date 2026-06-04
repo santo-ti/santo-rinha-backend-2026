@@ -27,7 +27,7 @@ RUN ./gradlew --no-daemon buildFatJar
 # best-first BBF saturated under load at 14 dims, see .docs/santannaf-analysis.md.)
 ARG INDEX_MAX_SIZE=3000000
 # -Xmx5g: parsing the 3M refs peaks ~1.5GB; IVF_PARALLELISM unset => k-means uses all cores.
-RUN IVF_META_CELLS=128 IVF_MAX_CELL=256 java -Xmx5g --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.tools.BuildIndexKt /refs.json.gz index.bin $INDEX_MAX_SIZE
+RUN IVF_META_CELLS=128 IVF_MAX_CELL=1024 java -Xmx5g --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.tools.BuildIndexKt /refs.json.gz index.bin $INDEX_MAX_SIZE
 
 # Capture native-image reachability metadata by exercising the app on the JVM with
 # the tracing agent (covers Ktor CIO's reflective AtomicReferenceFieldUpdater fields).
@@ -56,5 +56,8 @@ ENV INDEX_PATH=/app/index.bin
 # IVF exact search needs no recall knob. IVF_POINT_CAP (search.IvfIndex) is an optional
 # runtime work-cap (unset = fully exact, 0 errors) — sweep it on the submission branch to
 # trade the saturated tail for p99 without a rebuild; leave unset to keep the 0-error path.
+# Larger cells (IVF_MAX_CELL=1024) cut the bbox branch-and-bound's cell-visiting overhead (the
+# p99 driver after SIMD/pruning didn't move it); SIMD keeps the bigger per-cell scan cheap.
+ENV IVF_SIMD_SCAN=1
 EXPOSE 8080
 ENTRYPOINT ["/app/rinha-server"]
