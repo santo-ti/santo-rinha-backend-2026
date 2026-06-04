@@ -29,9 +29,12 @@ class ByteVectorizer(
 ) {
     private val scratch = ThreadLocal.withInitial { Scratch() }
 
-    fun vectorize(buf: ByteArray, len: Int): DoubleArray {
+    fun vectorize(buf: ByteArray, len: Int): DoubleArray = vectorize(buf, 0, len)
+
+    /** Vectorize the JSON object in `buf[off until end]` (the reactor passes a body at an offset). */
+    fun vectorize(buf: ByteArray, off: Int, end: Int): DoubleArray {
         val s = scratch.get().also { it.reset(buf) }
-        parseTopObject(buf, skipWs(buf, 0, len), len, s)
+        parseTopObject(buf, skipWs(buf, off, end), end, s)
         return compute(s)
     }
 

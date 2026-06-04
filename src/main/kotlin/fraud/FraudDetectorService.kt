@@ -38,6 +38,12 @@ class FraudDetectorService(
         return index.nearestFraudCount(byteVectorizer.vectorize(buf, len))
     }
 
+    /** Fraud-neighbor count from the JSON body in `buf[off until end]` (reactor hot path). */
+    fun fraudCountOf(buf: ByteArray, off: Int, end: Int): Int {
+        val index = indexState.current() ?: return 0
+        return index.nearestFraudCount(byteVectorizer.vectorize(buf, off, end))
+    }
+
     companion object {
         /** Fast, safe answer used when the index is unavailable or evaluation fails. */
         val FALLBACK = FraudScoreResponse(approved = true, fraudScore = 0.0)
