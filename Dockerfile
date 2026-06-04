@@ -66,12 +66,13 @@ WORKDIR /app
 COPY --from=builder /app/build/native/nativeCompile/rinha-server /app/rinha-server
 COPY --from=builder /app/index.bin /app/index.bin
 ENV INDEX_PATH=/app/index.bin
-# IVF exact search needs no recall knob. IVF_POINT_CAP (search.IvfIndex) is an optional
-# runtime work-cap (unset = fully exact, 0 errors) — sweep it on the submission branch to
-# trade the saturated tail for p99 without a rebuild; leave unset to keep the 0-error path.
-ENV IVF_SIMD_SCAN=1
-# Single-thread non-blocking NIO reactor on the hot path — the fast entries' design, to beat
-# Ktor CIO's ~17ms serving floor. Unset SERVER_ENGINE to fall back to Ktor CIO.
-ENV SERVER_ENGINE=reactor
+# Image defaults to the proven-best config: Ktor CIO + scalar exact IVF search over TCP
+# (official previews: ~17ms / score ~4766, 0 error). The single-thread NIO reactor and the
+# SIMD cell scan are kept in the image but OPT-IN via env, since both regressed p99 under the
+# 0.45-CPU/900-rps saturation (reactor+SIMD 88ms; reactor+scalar+UDS 46ms vs Ktor+scalar 17ms):
+#   - SERVER_ENGINE=reactor  -> single-thread NIO reactor (else Ktor CIO).
+#   - IVF_SIMD_SCAN=1         -> full-14-dim SIMD block scan (else scalar per-dim early-exit).
+#   - IVF_POINT_CAP=<n>       -> optional work-cap trading exactness for p99 (unset = 0-error).
+ENV IVF_SIMD_SCAN=0
 EXPOSE 8080
 ENTRYPOINT ["/app/rinha-server"]
