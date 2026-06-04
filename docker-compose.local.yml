@@ -1,0 +1,51 @@
+# LOCAL VALIDATION ONLY (never shipped). Mirrors submission/docker-compose.yml's topology
+# (HAProxy + 2 APIs + UDS over a shared tmpfs `sockets` volume + scalar search) but builds a
+# JVM image from Dockerfile.jvm instead of pulling the native one — fast plumbing de-risk.
+# No deploy.resources limits: Docker Desktop ignores them anyway and we want it to run free.
+x-api: &api
+  build:
+    context: .
+    dockerfile: Dockerfile.jvm
+  image: rinha-api-jvm:local
+  networks:
+    - rinha
+  volumes:
+    - sockets:/sockets
+
+services:
+  api-1:
+    <<: *api
+    environment:
+      SERVER_ENGINE: reactor
+      IVF_SIMD_SCAN: "0"
+      SERVER_SOCKET_PATH: /sockets/api-1.sock
+
+  api-2:
+    <<: *api
+    environment:
+      SERVER_ENGINE: reactor
+      IVF_SIMD_SCAN: "0"
+      SERVER_SOCKET_PATH: /sockets/api-2.sock
+
+  lb:
+    image: haproxy:2.9-alpine
+    depends_on:
+      - api-1
+      - api-2
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - sockets:/sockets
+    ports:
+      - "9999:9999"
+    networks:
+      - rinha
+
+networks:
+  rinha:
+    driver: bridge
+
+volumes:
+  sockets:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs

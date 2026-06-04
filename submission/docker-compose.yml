@@ -4,18 +4,26 @@
 # replaced with the freshly published, immutable tag by
 # .github/workflows/publish-submission.yml when it materializes the branch.
 #
-# v1.9.0: EXACT bbox branch-and-bound search over a cell-split IVF index (split cap 256,
-# santannaf's algorithm) → ZERO routing error (det maxed at 3000). The cell scan now uses
-# a per-dimension early-exit (drops far candidates after a few of the 14 dims) to cut the
-# exact-search p99 tail while keeping the result bit-identical (E=0). Split 128 was tried
-# in v1.8.0 and REGRESSED p99 (more cells = more routing cost than tighter boxes saved),
-# so we stay at 256. NPROBE is IGNORED by the exact search, so it is not set here. LB is
-# HAProxy in TCP mode (the proven 4777 infra) — UDS was tried in v1.6.0 and FAILED the
-# contest health check ("No status"), so the API speaks plain TCP and HAProxy forwards bytes.
+# v1.22.0 bundle (latency, detection still maxed at 3000 / 0-error):
+#   1. SCALAR cell scan (IVF_SIMD_SCAN=0): the per-dimension early-exit drops far
+#      candidates after a few of the 14 dims — cheaper than the full-14-dim SIMD block
+#      on the saturated tail where most points are far (santannaf's winning scan is
+#      scalar too). Bit-identical squared distances → same 5-NN → E unchanged (0 error).
+#      Pure env flip over the baked image; A/B by setting it back to "1".
+#   2. UDS LB↔API over a shared tmpfs `sockets` volume (was loopback TCP) — drops the
+#      TCP/IP stack + handshake + loopback copies; the per-request CPU it saves shortens
+#      the arrival-rate queue that drives p99 (santannaf −1ms). See haproxy.cfg.
+#   CPU/mem unchanged from the proven 17ms config: api 0.45/160MB ×2 + lb 0.10/30MB.
+#   cpuset pinning is intentionally NOT enabled — pinning to a CPU index the eval host
+#   may not have makes the whole stack fail to boot (worst case), and santannaf shipped
+#   without it. To experiment on confirmed ≥4-CPU hardware, add e.g. `cpuset: "1"` /
+#   `cpuset: "2"` to the APIs and `cpuset: "0"` to the lb.
 x-api: &api
   image: __IMAGE_REF__
   networks:
     - rinha
+  volumes:
+    - sockets:/sockets
   deploy:
     resources:
       limits:
@@ -25,19 +33,28 @@ x-api: &api
 services:
   api-1:
     <<: *api
+    environment:
+      SERVER_ENGINE: reactor
+      IVF_SIMD_SCAN: "0"
+      SERVER_SOCKET_PATH: /sockets/api-1.sock
 
   api-2:
     <<: *api
+    environment:
+      SERVER_ENGINE: reactor
+      IVF_SIMD_SCAN: "0"
+      SERVER_SOCKET_PATH: /sockets/api-2.sock
 
   lb:
     image: haproxy:2.9-alpine
     depends_on:
       - api-1
       - api-2
-    ports:
-      - "9999:9999"
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - sockets:/sockets
+    ports:
+      - "9999:9999"
     networks:
       - rinha
     deploy:
@@ -49,3 +66,10 @@ services:
 networks:
   rinha:
     driver: bridge
+
+# Shared in-RAM (tmpfs) directory the APIs bind their UDS into and the LB connects to.
+volumes:
+  sockets:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs

@@ -1,0 +1,9 @@
+# Local-validation image ONLY (never shipped). Runs the fat jar on a stock JDK so the
+# UDS + HAProxy topology can be smoke-tested without the ~10-min native build. The
+# native image (Dockerfile) is what ships; this exists to de-risk the wiring fast.
+FROM eclipse-temurin:25-jdk
+WORKDIR /app
+COPY localval/app.jar /app/app.jar
+COPY localval/index.bin /app/index.bin
+ENV INDEX_PATH=/app/index.bin
+ENTRYPOINT ["java", "--add-modules", "jdk.incubator.vector", "-jar", "/app/app.jar"]

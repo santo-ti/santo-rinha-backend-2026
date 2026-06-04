@@ -13,6 +13,7 @@ import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermissions
 
 /**
  * Single-thread non-blocking NIO reactor for the two contest routes (env `SERVER_ENGINE=reactor`).
@@ -66,9 +67,15 @@ class NioReactorServer(
         if (socketPath.isNullOrBlank()) {
             ServerSocketChannel.open().apply { bind(InetSocketAddress("0.0.0.0", tcpPort), BACKLOG) }
         } else {
-            Files.deleteIfExists(Path.of(socketPath))
+            val path = Path.of(socketPath)
+            Files.deleteIfExists(path) // clear a stale socket from a previous run so bind() succeeds
             ServerSocketChannel.open(StandardProtocolFamily.UNIX)
                 .apply { bind(UnixDomainSocketAddress.of(socketPath), BACKLOG) }
+                // The LB runs in a SEPARATE container and must connect to this socket. The
+                // default umask can leave it owner-only; widen to 0666 so HAProxy reaches it
+                // regardless of the user it runs as (the operational detail the Ktor UDS attempt
+                // missed — it failed the contest health check with "No status", see #7683).
+                .also { runCatching { Files.setPosixFilePermissions(path, SOCKET_PERMS) } }
         }
 
     private fun onAccept(server: ServerSocketChannel, selector: Selector) {
@@ -164,6 +171,8 @@ class NioReactorServer(
     private companion object {
         const val BACKLOG = 4096
         const val MAX_BUF = 256 * 1024
+        // rw-rw-rw-: the cross-container LB must be able to connect to the bound UDS.
+        val SOCKET_PERMS = PosixFilePermissions.fromString("rw-rw-rw-")
     }
 }
 

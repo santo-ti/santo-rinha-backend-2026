@@ -40,15 +40,18 @@ RUN printf '%s' '{"id":"tx-1","transaction":{"amount":41.12,"installments":2,"re
  && sleep 3 \
  && echo "--- generated native-config ---" && ls -la /app/native-config
 
-# Second agent pass on the NIO reactor (SERVER_ENGINE=reactor): captures the Selector /
-# SocketChannel reachability, merged in so the native binary works under the reactor too.
-RUN ( SERVER_ENGINE=reactor INDEX_PATH=/app/index.bin java -agentlib:native-image-agent=config-merge-dir=/app/native-config --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.bootstrap.MainKt & echo $! > /tmp/app2.pid ) \
- && for i in $(seq 1 40); do curl -sf -o /dev/null http://localhost:8080/ready && break || sleep 1; done \
- && curl -s -X POST http://localhost:8080/fraud-score -H "Content-Type: application/json" -d @/tmp/p.json > /dev/null || true \
+# Second agent pass on the NIO reactor bound to a UNIX DOMAIN SOCKET (the submission
+# transport): captures the Selector / SocketChannel AND the UnixDomainSocketAddress /
+# StandardProtocolFamily.UNIX reachability, merged in so the native binary can bind and
+# serve over UDS at runtime (the path the Ktor attempt lacked metadata for). Exercised
+# via curl's --unix-socket so /ready and /fraud-score are answered over the socket.
+RUN ( SERVER_ENGINE=reactor SERVER_SOCKET_PATH=/tmp/api.sock INDEX_PATH=/app/index.bin java -agentlib:native-image-agent=config-merge-dir=/app/native-config --add-modules jdk.incubator.vector -cp "build/libs/*" dev.santo.bootstrap.MainKt & echo $! > /tmp/app2.pid ) \
+ && for i in $(seq 1 40); do curl -sf -o /dev/null --unix-socket /tmp/api.sock http://localhost/ready && break || sleep 1; done \
+ && curl -s -X POST --unix-socket /tmp/api.sock http://localhost/fraud-score -H "Content-Type: application/json" -d @/tmp/p.json > /dev/null || true \
  && sleep 1 \
  && kill -TERM "$(cat /tmp/app2.pid)" || true \
  && sleep 2 \
- && echo "--- merged reactor native-config ---"
+ && echo "--- merged reactor UDS native-config ---"
 
 # Supplement the agent metadata with a hand-written reflect-config (kept in a late
 # layer so iterating on it only re-runs nativeCompile, not the index/agent steps).
