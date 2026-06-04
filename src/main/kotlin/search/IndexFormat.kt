@@ -9,12 +9,12 @@ package dev.santo.search
 internal const val INDEX_MAGIC = 0x46534932
 
 /**
- * Magic header for the two-level IVF artifact ("IVF3" — SoA-16 block point store
- * for the SIMD kernel; bumped from "IVF2" AoS so an old artifact fails fast instead
- * of being misread). Distinct from [INDEX_MAGIC] so a VP-tree artifact and an IVF
- * artifact each fail fast if fed to the wrong reader.
+ * Magic header for the two-level IVF artifact ("IVF4" — ROW-MAJOR int16 point store
+ * for the cache-sequential scalar scan; bumped from "IVF3" SoA-16 so an old block
+ * artifact fails fast instead of being misread). Distinct from [INDEX_MAGIC] so a
+ * VP-tree artifact and an IVF artifact each fail fast if fed to the wrong reader.
  */
-internal const val IVF_MAGIC = 0x49564633
+internal const val IVF_MAGIC = 0x49564634
 
 /**
  * Magic header for the KD-tree artifact ("KDT1"). Distinct from [IVF_MAGIC] so [dev.santo.bootstrap.IndexLoader]

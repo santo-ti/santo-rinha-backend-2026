@@ -12,24 +12,24 @@ import java.nio.ByteBuffer
  * [IVF_MAGIC] as the layout's single source of truth.
  *
  * Layout: magic, dim, k, n, centroids (`k*dim` floats, centroid-major, big-endian),
- * offsets (`k+1` ints, cumulative real counts), blockOffsets (`k+1` ints), SoA-16
- * block store (`totalBlocks*dim*BLOCK` shorts), packed block-label bitset
- * (`totalBlocks*BLOCK` bits), k1, metaCentroids (`k1*dim` floats), metaOfCell (`k` ints).
+ * offsets (`k+1` ints, cumulative real counts = row ranges per cell), ROW-MAJOR int16
+ * store (`n*dim` shorts), labels (`n` bytes, 1=fraud), k1, metaCentroids (`k1*dim` floats),
+ * metaOfCell (`k` ints).
  */
 object IvfWriter {
 
     fun writeTo(index: IvfIndex, output: OutputStream) {
         val out = DataOutputStream(output)
+        val n = index.offsets[index.k]
         out.writeInt(IVF_MAGIC)
         out.writeInt(index.dim)
         out.writeInt(index.k)
-        out.writeInt(index.offsets[index.k]) // n (= total real points)
+        out.writeInt(n) // n (= total real points)
 
         for (f in index.centroids) out.writeFloat(f)
         for (o in index.offsets) out.writeInt(o)
-        for (b in index.blockOffsets) out.writeInt(b)
-        out.write(shortsToBytes(index.blocks))
-        out.write(packBits(index.blockLabels))
+        out.write(shortsToBytes(index.rows))
+        out.write(labelBytes(index.labels))
 
         out.writeInt(index.k1)
         for (f in index.metaCentroids) out.writeFloat(f)
@@ -43,11 +43,6 @@ object IvfWriter {
         return bytes
     }
 
-    private fun packBits(flags: BooleanArray): ByteArray {
-        val bytes = ByteArray((flags.size + 7) / 8)
-        for (i in flags.indices) {
-            if (flags[i]) bytes[i ushr 3] = (bytes[i ushr 3].toInt() or (1 shl (i and 7))).toByte()
-        }
-        return bytes
-    }
+    private fun labelBytes(flags: BooleanArray): ByteArray =
+        ByteArray(flags.size) { if (flags[it]) 1 else 0 }
 }

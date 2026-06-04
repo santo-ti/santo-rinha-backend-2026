@@ -1,6 +1,5 @@
 package dev.santo.tools
 
-import dev.santo.search.BlockDistance
 import dev.santo.search.DEFAULT_META_CELLS
 import dev.santo.search.DEFAULT_NPROBE1
 import dev.santo.search.DEFAULT_NPROBE2
@@ -50,42 +49,29 @@ object IvfBuilder {
             if (maxCellSize > 0) splitLargeCells(srcStore, n, dim, km, maxCellSize)
             else Triple(km.centroids, km.assignment, km.k)
 
-        // Logical (real) per-cell point counts, cumulative.
+        // Logical (real) per-cell point counts, cumulative — these are the row ranges per cell.
         val offsets = IntArray(cellCount + 1)
         for (i in 0 until n) offsets[assignment[i] + 1]++
         for (c in 0 until cellCount) offsets[c + 1] += offsets[c]
 
-        // Block offsets: each cell's points pad up to a multiple of BLOCK (SoA-16).
-        val block = BlockDistance.BLOCK
-        val blockOffsets = IntArray(cellCount + 1)
-        for (c in 0 until cellCount) {
-            val count = offsets[c + 1] - offsets[c]
-            blockOffsets[c + 1] = blockOffsets[c] + (count + block - 1) / block
-        }
-        val totalBlocks = blockOffsets[cellCount]
-        val blockStride = dim * block
-
-        // Pack each point into its cell's blocks, dimension-major within a block.
-        // Padding slots stay zero (codes) / false (labels) — masked at scan time.
-        val blocks = ShortArray(totalBlocks * blockStride)
-        val blockLabels = BooleanArray(totalBlocks * block)
+        // Pack each point ROW-MAJOR into its cell's contiguous range: point at row `dst` keeps
+        // its `dim` int16 codes adjacent (`rows[dst*dim .. dst*dim+dim]`) so the cell scan walks
+        // memory sequentially (one cache line per point) — santannaf's layout, the latency lever.
+        val rows = ShortArray(n * dim)
+        val labels = BooleanArray(n)
         val within = IntArray(cellCount)
         for (i in 0 until n) {
             val c = assignment[i]
-            val j = within[c]++
-            val blk = blockOffsets[c] + j / block
-            val slot = j % block
-            val src = i * dim
-            val base = blk * blockStride
-            for (d in 0 until dim) blocks[base + d * block + slot] = srcStore[src + d]
-            blockLabels[blk * block + slot] = srcLabels[i]
+            val dst = offsets[c] + within[c]++
+            System.arraycopy(srcStore, i * dim, rows, dst * dim, dim)
+            labels[dst] = srcLabels[i]
         }
 
         // Level-2: cluster the cell centroids into districts.
         val k1 = minOf(metaCells, cellCount)
         val (metaCentroids, metaOfCell) = clusterCentroids(centroids, cellCount, dim, k1)
 
-        return IvfIndex(centroids, offsets, blocks, blockOffsets, blockLabels, dim, cellCount, metaCentroids, k1, metaOfCell, nprobe1, nprobe2)
+        return IvfIndex(centroids, offsets, rows, labels, dim, cellCount, metaCentroids, k1, metaOfCell, nprobe1, nprobe2)
     }
 
     /**

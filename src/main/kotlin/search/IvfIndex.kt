@@ -7,45 +7,34 @@ const val DEFAULT_META_CELLS = 64
 
 /**
  * Kept for API/format compatibility (the build tools and env still pass them), but the
- * search is now EXACT and does not gate on a fixed probe count — see [IvfIndex]. A query
- * visits every district/cell whose bounding box could still hold a closer neighbor, so
- * recall no longer depends on these. They are ignored by [IvfIndex.nearestFraudCount].
+ * search is EXACT and does not gate on a fixed probe count — a query visits every
+ * district/cell whose bounding box could still hold a closer neighbor. Ignored by search.
  */
 const val DEFAULT_NPROBE1 = 4
 const val DEFAULT_NPROBE2 = 6
 
 /**
- * Two-level IVF (inverted file) index with an EXACT branch-and-bound search. References
- * are partitioned offline into [k] cells by k-means; the cell centroids are themselves
- * clustered into [k1] districts (meta-centroids).
+ * Two-level IVF (inverted file) index with an EXACT bbox branch-and-bound search.
  *
- * WHY EXACT (vs the old fixed nprobe): the previous search probed a fixed NPROBE1
- * districts → NPROBE2 cells and stopped, so when the true 5-NN sat in an unprobed cell
- * the result was wrong (~37 weighted contest errors). This version mirrors the top entry
- * (santannaf): it keeps a per-cell axis-aligned bounding box (AABB) and a per-district
- * union box, seeds the result from the nearest cell to get a tight 5th-NN radius, then
- * visits EVERY district/cell — skipping one only when its box's closest possible point is
- * already farther than the current 5th neighbor. That bound is admissible, so a skipped
- * cell provably cannot hold a top-5 neighbor: the answer equals a full brute-force top-5
- * over all [k] cells (exact in int16 space) → zero routing misses. The boxes prune almost
- * everything, so the exact scan still touches only a few cells per query.
+ * Point storage is ROW-MAJOR (santannaf's layout): each cell's points are packed
+ * contiguously and within a point the [dim] int16 codes are ADJACENT in memory
+ * (`rows[i*dim + d]`). So scanning a cell walks memory sequentially and a point's whole
+ * vector lives in one cache line — vs the old SoA-16 block store, whose scalar scan
+ * strode by 16 shorts per dimension (~[dim]× the cache lines per point). Under the
+ * 0.45-CPU / 900-rps saturation that per-point memory traffic is the dominant per-request
+ * CPU cost, so the contiguous layout is the real latency lever. The cell scan is a tight
+ * per-dimension early-exit loop (drop a far point as soon as its partial squared distance
+ * reaches the current 5th-NN — bit-identical to a full-distance scan → E unchanged).
  *
- * The bounding boxes are DERIVED from [blocks] at construction (the real points per cell),
- * so the on-disk artifact format is unchanged — [IvfReader] builds the same object.
- *
- * Point storage is SoA-16 BLOCKS (see [BlockDistance]): each cell's points are packed
- * into blocks of [BlockDistance.BLOCK], dimension-major within a block, so the cell scan
- * computes 16 squared distances per SIMD pass (~6.5× on an AVX2 native image). [offsets]
- * keeps the logical (real) per-cell point counts; [blockOffsets] delimits each cell's
- * blocks; the trailing partial block is padded and the padding slots are masked out. The
- * hot path is allocation-free (pooled per-thread [Scratch], reset per query).
+ * The per-cell / per-district bounding boxes are derived from [rows] at construction; the
+ * exact branch-and-bound skips a cell only when its box's nearest possible point is already
+ * farther than the current 5th neighbor (admissible → equals a full brute-force top-5).
  */
 class IvfIndex internal constructor(
     internal val centroids: FloatArray,      // k*dim, centroid-major (cell centroids)
-    internal val offsets: IntArray,          // size k+1; cumulative REAL point counts (logical)
-    internal val blocks: ShortArray,         // totalBlocks*dim*BLOCK int16, SoA-16, grouped by cell
-    internal val blockOffsets: IntArray,     // size k+1; cell c occupies blocks [blockOffsets[c], blockOffsets[c+1])
-    internal val blockLabels: BooleanArray,  // size totalBlocks*BLOCK; padding slots = false
+    internal val offsets: IntArray,          // size k+1; cumulative point counts (row range per cell)
+    internal val rows: ShortArray,           // n*dim int16, ROW-MAJOR, grouped by cell
+    internal val labels: BooleanArray,       // size n; fraud label per row (cell order)
     internal val dim: Int,
     internal val k: Int,
     internal val metaCentroids: FloatArray,  // k1*dim, centroid-major (district centroids)
@@ -55,8 +44,6 @@ class IvfIndex internal constructor(
     @Suppress("UNUSED_PARAMETER") nprobe2: Int = DEFAULT_NPROBE2,
 ) : VectorIndex {
 
-    private val blockStride = dim * BlockDistance.BLOCK
-
     /** Cells belonging to each district, built once from [metaOfCell]. */
     private val metaMembers: Array<IntArray> = run {
         val lists = Array(k1) { ArrayList<Int>() }
@@ -64,11 +51,9 @@ class IvfIndex internal constructor(
         Array(k1) { lists[it].toIntArray() }
     }
 
-    // Per-cell AABB over the cell's real int16 points (empty cells stay inverted MAX/MIN,
-    // so their lower bound is huge and they are always pruned). Derived from [blocks].
+    // Per-cell AABB over the cell's real int16 points; per-district union AABB.
     private val cellBboxMin = ShortArray(k * dim)
     private val cellBboxMax = ShortArray(k * dim)
-    // Per-district union AABB (over its member cells), the cheap one-test district prune.
     private val districtBboxMin = ShortArray(k1 * dim)
     private val districtBboxMax = ShortArray(k1 * dim)
 
@@ -80,23 +65,9 @@ class IvfIndex internal constructor(
 
     /**
      * Optional work-cap (env `IVF_POINT_CAP`, 0/unset = disabled): abort the branch-and-bound
-     * once this many points have been scanned. The cheap majority of queries finish well under
-     * the cap (still exact, E unchanged); only the dim5-saturated tail hits it and stops early,
-     * trading a guaranteed-exact 5-NN for a much lower p99 tail. Env-tunable on the submission
-     * branch WITHOUT a rebuild — sweep it against previews, restore 0 (exact) to fall back.
+     * once this many points have been scanned. Unset keeps the fully-exact 0-error path.
      */
     private val pointCap = System.getenv("IVF_POINT_CAP")?.toIntOrNull()?.takeIf { it > 0 } ?: Int.MAX_VALUE
-
-    /**
-     * Optional SIMD cell scan (env `IVF_SIMD_SCAN=1`): compute all 16 points of a block at once
-     * via [BlockDistance] (full 14-dim, no per-dimension early-exit) instead of the scalar
-     * early-exit loop. Bit-identical result (same squared distances → same k-NN), so detection
-     * is unchanged. The scalar path early-exits cheaply when points are far; SIMD wins on the
-     * dim-saturated p99 tail where points are close and early-exit barely fires. A/B via the env
-     * (no rebuild); default off keeps the proven scalar path.
-     */
-    @Volatile
-    internal var simdScan = System.getenv("IVF_SIMD_SCAN") == "1"
 
     override fun nearestFraudCount(query: DoubleArray): Int {
         val s = scratch.get()
@@ -105,16 +76,13 @@ class IvfIndex internal constructor(
 
         val knn = s.knn.also { it.reset() }
 
-        // Seed: nearest district -> nearest member cell. Scanning it first makes `worst`
-        // (the 5th-NN squared distance) tight immediately, so the box prune rejects almost
-        // every other cell.
+        // Seed from the nearest district -> nearest member cell so `worst` (the 5th-NN
+        // squared distance) is tight immediately and the box prune rejects almost everything.
         val seedDistrict = nearestDistrict(codes)
         val seedCell = if (seedDistrict >= 0) nearestCellIn(seedDistrict, codes) else -1
-        var points = if (seedCell >= 0) scanCell(seedCell, codes, knn, s.out) else 0
+        var points = if (seedCell >= 0) scanCell(seedCell, codes, knn) else 0
         var worst = knn.worst()
 
-        // Exact branch-and-bound: visit every district/cell that its box says could still
-        // hold a closer neighbor than the current 5th-NN. Stop early if the work-cap is hit.
         if (points < pointCap) {
             run {
                 for (district in 0 until k1) {
@@ -122,7 +90,7 @@ class IvfIndex internal constructor(
                     for (cell in metaMembers[district]) {
                         if (cell == seedCell) continue
                         if (cellCanContain(codes, cell, worst)) {
-                            points += scanCell(cell, codes, knn, s.out)
+                            points += scanCell(cell, codes, knn)
                             worst = knn.worst()
                             if (points >= pointCap) return@run
                         }
@@ -134,59 +102,38 @@ class IvfIndex internal constructor(
     }
 
     /**
-     * Scans all real points of [cell] with a per-dimension early-exit, offering each
-     * surviving (distance², label) to [knn]. For a far point we stop summing as soon as the
-     * partial squared distance reaches the current 5th-NN ([KNearest.worst]): the remaining
-     * dimensions can only add to the sum and [KNearest.offer] rejects anything `>= worst`, so
-     * that point provably cannot enter the top-5 and skipping it leaves the result unchanged
-     * (bit-identical to scanning every dimension). On the exact search's heavy tail most
-     * candidates are far, so the cutoff usually fires after a few of the 14 dimensions — much
-     * cheaper than the SIMD block kernel, which always computes the full distance for all 16
-     * points. Reads int16 codes straight from the SoA-16 [blocks] (dim d of `slot` lives at
-     * `blockBase + d*BLOCK + slot`), so a block stays L1-resident across its points.
+     * Scans every real point of [cell] sequentially over the ROW-MAJOR [rows] (point `i`'s
+     * [dim] codes at `i*dim .. i*dim+dim`), with a per-dimension early-exit: stop summing a
+     * far point as soon as its partial squared distance reaches the current 5th-NN ([worst]),
+     * since [KNearest.offer] would reject anything `>= worst` — bit-identical to a full scan.
+     * `worst` is hoisted and refreshed only when a point is actually offered.
      */
-    private fun scanCell(cell: Int, codes: IntArray, knn: KNearest, out: LongArray): Int {
-        val count = offsets[cell + 1] - offsets[cell]
-        if (count == 0) return 0
-        var remaining = count
-        val block = BlockDistance.BLOCK
-        val blkEnd = blockOffsets[cell + 1]
-        var blk = blockOffsets[cell]
-        if (simdScan) {
-            // SIMD: full 14-dim squared distance for all 16 points of the block at once. Same
-            // squared distances as the scalar loop → KNearest sees identical candidates → exact.
-            while (blk < blkEnd) {
-                val slots = if (remaining < block) remaining else block
-                BlockDistance.distances(codes, blocks, blk * blockStride, dim, out)
-                val lbase = blk * block
-                for (slot in 0 until slots) knn.offer(out[slot].toDouble(), blockLabels[lbase + slot])
-                remaining -= slots
-                blk++
+    private fun scanCell(cell: Int, codes: IntArray, knn: KNearest): Int {
+        val from = offsets[cell]
+        val to = offsets[cell + 1]
+        if (from >= to) return 0
+        val r = rows
+        val d = dim
+        var worst = knn.worst()
+        var i = from
+        while (i < to) {
+            var base = i * d
+            val end = base + d
+            var sum = 0L
+            var ci = 0
+            while (base < end) {
+                val diff = (codes[ci] - r[base].toInt()).toLong()
+                sum += diff * diff
+                if (sum >= worst) break
+                base++; ci++
             }
-            return count
-        }
-        while (blk < blkEnd) {
-            val slots = if (remaining < block) remaining else block
-            val blockBase = blk * blockStride
-            val lbase = blk * block
-            for (slot in 0 until slots) {
-                val worst = knn.worst()
-                var sum = 0L
-                var idx = blockBase + slot
-                var d = 0
-                while (d < dim) {
-                    val diff = (codes[d] - blocks[idx].toInt()).toLong()
-                    sum += diff * diff
-                    if (sum >= worst) break
-                    idx += block
-                    d++
-                }
-                if (d == dim) knn.offer(sum.toDouble(), blockLabels[lbase + slot])
+            if (base == end) {
+                knn.offer(sum.toDouble(), labels[i])
+                worst = knn.worst()
             }
-            remaining -= slots
-            blk++
+            i++
         }
-        return count
+        return to - from
     }
 
     /** Nearest district (level-1 meta-centroid) to [codes], or -1 if there are none. */
@@ -211,12 +158,6 @@ class IvfIndex internal constructor(
         return best
     }
 
-    /**
-     * True if [cell]'s bounding box could still hold a point closer than [worst]
-     * (squared). Admissible lower bound: per dimension the gap to the box, squared and
-     * summed, with early-exit once it exceeds [worst]. `worst == +inf` (fewer than K
-     * seen) makes this always true, so nothing is wrongly skipped before K are found.
-     */
     private fun cellCanContain(codes: IntArray, cell: Int, worst: Double): Boolean =
         boxCanContain(codes, cellBboxMin, cellBboxMax, cell * dim, worst)
 
@@ -240,35 +181,24 @@ class IvfIndex internal constructor(
 
     /** Computes per-cell AABBs from the real points, then per-district union AABBs. */
     private fun buildBoundingBoxes() {
-        val block = BlockDistance.BLOCK
         for (c in 0 until k) {
-            val base = c * dim
+            val cb = c * dim
             for (d in 0 until dim) {
-                cellBboxMin[base + d] = Short.MAX_VALUE
-                cellBboxMax[base + d] = Short.MIN_VALUE
+                cellBboxMin[cb + d] = Short.MAX_VALUE
+                cellBboxMax[cb + d] = Short.MIN_VALUE
             }
-            var remaining = offsets[c + 1] - offsets[c]
-            var blk = blockOffsets[c]
-            while (remaining > 0) {
-                val slots = if (remaining < block) remaining else block
-                val blockBase = blk * blockStride
+            var i = offsets[c]
+            val to = offsets[c + 1]
+            while (i < to) {
+                val base = i * dim
                 for (d in 0 until dim) {
-                    var mn = cellBboxMin[base + d]
-                    var mx = cellBboxMax[base + d]
-                    val dimBase = blockBase + d * block
-                    for (slot in 0 until slots) {
-                        val v = blocks[dimBase + slot]
-                        if (v < mn) mn = v
-                        if (v > mx) mx = v
-                    }
-                    cellBboxMin[base + d] = mn
-                    cellBboxMax[base + d] = mx
+                    val v = rows[base + d]
+                    if (v < cellBboxMin[cb + d]) cellBboxMin[cb + d] = v
+                    if (v > cellBboxMax[cb + d]) cellBboxMax[cb + d] = v
                 }
-                remaining -= slots
-                blk++
+                i++
             }
         }
-        // District union: min/max over member cells (empty districts stay inverted).
         for (m in 0 until k1) {
             val mb = m * dim
             for (d in 0 until dim) {
@@ -276,8 +206,8 @@ class IvfIndex internal constructor(
                 districtBboxMax[mb + d] = Short.MIN_VALUE
             }
             for (cell in metaMembers[m]) {
-                val cb = cell * dim
                 if (offsets[cell + 1] - offsets[cell] == 0) continue
+                val cb = cell * dim
                 for (d in 0 until dim) {
                     if (cellBboxMin[cb + d] < districtBboxMin[mb + d]) districtBboxMin[mb + d] = cellBboxMin[cb + d]
                     if (cellBboxMax[cb + d] > districtBboxMax[mb + d]) districtBboxMax[mb + d] = cellBboxMax[cb + d]
@@ -287,16 +217,10 @@ class IvfIndex internal constructor(
     }
 
     /** int16 code of the [within]-th point of [cell] in dimension [d] (offline-tool access). */
-    internal fun codeAt(cell: Int, within: Int, d: Int): Int {
-        val blk = blockOffsets[cell] + within / BlockDistance.BLOCK
-        return blocks[blk * blockStride + d * BlockDistance.BLOCK + within % BlockDistance.BLOCK].toInt()
-    }
+    internal fun codeAt(cell: Int, within: Int, d: Int): Int = rows[(offsets[cell] + within) * dim + d].toInt()
 
     /** Fraud label of the [within]-th point of [cell] (offline-tool access). */
-    internal fun labelAt(cell: Int, within: Int): Boolean {
-        val blk = blockOffsets[cell] + within / BlockDistance.BLOCK
-        return blockLabels[blk * BlockDistance.BLOCK + within % BlockDistance.BLOCK]
-    }
+    internal fun labelAt(cell: Int, within: Int): Boolean = labels[offsets[cell] + within]
 
     /** Distance² from query codes to a centroid-major centroid at [base] (float). */
     private fun distSq(codes: IntArray, arr: FloatArray, base: Int): Double {
@@ -314,6 +238,5 @@ class IvfIndex internal constructor(
     private class Scratch(dim: Int, k: Int) {
         val codes = IntArray(dim)
         val knn = KNearest(k)
-        val out = LongArray(BlockDistance.BLOCK) // SIMD per-block distance scratch
     }
 }
