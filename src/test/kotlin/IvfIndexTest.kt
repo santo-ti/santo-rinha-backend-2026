@@ -98,7 +98,7 @@ class IvfIndexTest {
     @Test
     fun `approximate search at nprobe=k visits all cells and equals brute force`() {
         val approx = IvfBuilder.build(references, k = k, metaCells = k, nprobe1 = k, nprobe2 = k)
-            .also { it.approxNprobe = k } // visiting all k cells = exact
+            .also { it.approxNprobe = k; it.approxNdistrict = k } // all districts + all cells = exact
         var mismatches = 0
         for (q in queries()) if (approx.nearestFraudCount(q) != quantizedOracle.nearestFraudCount(q)) mismatches++
         assertEquals(0, mismatches, "approximate at nprobe=k diverged from brute force")

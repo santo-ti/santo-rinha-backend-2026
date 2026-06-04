@@ -110,6 +110,11 @@ class IvfIndex internal constructor(
     @Volatile
     internal var approxNprobe = (System.getenv("IVF_NPROBE")?.toIntOrNull() ?: 0).coerceIn(0, MAX_NPROBE)
 
+    /** Districts considered by the approximate search (env `IVF_NDISTRICT`); cells are taken from
+     *  these. Kept small so routing stays cheap; raise it if recall needs more spread. */
+    @Volatile
+    internal var approxNdistrict = (System.getenv("IVF_NDISTRICT")?.toIntOrNull() ?: 8).coerceIn(1, MAX_NDISTRICT)
+
     override fun nearestFraudCount(query: DoubleArray): Int {
         val s = scratch.get()
         val codes = s.codes
@@ -148,26 +153,50 @@ class IvfIndex internal constructor(
     }
 
     /**
-     * Approximate search: scan only the [approxNprobe] cells whose centroid is nearest the
-     * query, then return. A bounded top-N selection over the [k] centroids (track the current
-     * max slot, replace it when a nearer cell arrives), then scan the survivors.
+     * Approximate search, district-routed (the v1.4.0 mechanism): rank only the [approxNdistrict]
+     * nearest districts (k1≈128 meta-centroids) — NOT all k cells (that O(k) ranking was slower
+     * than the exact search) — then, among those districts' member cells, scan the [approxNprobe]
+     * nearest by centroid and stop. Bounds work uniformly → low flat p99; may miss a neighbor in
+     * an unvisited cell (a few FP/FN). Each level is a bounded top-N (track the max slot, replace
+     * it when a nearer one arrives).
      */
     private fun approximate(codes: IntArray, knn: KNearest, s: Scratch): Int {
+        // Level 1: the nd nearest districts.
+        val nd = approxNdistrict.coerceAtMost(k1)
+        val dcand = s.dcand
+        val dcandD = s.dcandD
+        var dn = 0
+        var dmax = 0
+        for (m in 0 until k1) {
+            val d = distSq(codes, metaCentroids, m * dim)
+            if (dn < nd) {
+                dcand[dn] = m; dcandD[dn] = d
+                if (d > dcandD[dmax]) dmax = dn
+                dn++
+            } else if (d < dcandD[dmax]) {
+                dcand[dmax] = m; dcandD[dmax] = d
+                dmax = 0
+                for (i in 1 until nd) if (dcandD[i] > dcandD[dmax]) dmax = i
+            }
+        }
+        // Level 2: the np nearest cells among those districts' members.
         val np = approxNprobe
         val cand = s.cand
         val candD = s.candD
         var n = 0
         var maxPos = 0
-        for (c in 0 until k) {
-            val d = distSq(codes, centroids, c * dim)
-            if (n < np) {
-                cand[n] = c; candD[n] = d
-                if (d > candD[maxPos]) maxPos = n
-                n++
-            } else if (d < candD[maxPos]) {
-                cand[maxPos] = c; candD[maxPos] = d
-                maxPos = 0
-                for (i in 1 until np) if (candD[i] > candD[maxPos]) maxPos = i
+        for (di in 0 until dn) {
+            for (c in metaMembers[dcand[di]]) {
+                val d = distSq(codes, centroids, c * dim)
+                if (n < np) {
+                    cand[n] = c; candD[n] = d
+                    if (d > candD[maxPos]) maxPos = n
+                    n++
+                } else if (d < candD[maxPos]) {
+                    cand[maxPos] = c; candD[maxPos] = d
+                    maxPos = 0
+                    for (i in 1 until np) if (candD[i] > candD[maxPos]) maxPos = i
+                }
             }
         }
         for (i in 0 until n) scanCell(cand[i], codes, knn, s.out)
@@ -358,9 +387,12 @@ class IvfIndex internal constructor(
         val out = LongArray(BlockDistance.BLOCK) // SIMD per-block distance scratch
         val cand = IntArray(MAX_NPROBE)          // approximate: nearest-cell candidate ids
         val candD = DoubleArray(MAX_NPROBE)      // approximate: their centroid distances
+        val dcand = IntArray(MAX_NDISTRICT)      // approximate: nearest-district candidate ids
+        val dcandD = DoubleArray(MAX_NDISTRICT)  // approximate: their meta-centroid distances
     }
 
     private companion object {
         const val MAX_NPROBE = 512
+        const val MAX_NDISTRICT = 128
     }
 }
