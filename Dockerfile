@@ -56,5 +56,12 @@ ENV INDEX_PATH=/app/index.bin
 # IVF exact search needs no recall knob. IVF_POINT_CAP (search.IvfIndex) is an optional
 # runtime work-cap (unset = fully exact, 0 errors) — sweep it on the submission branch to
 # trade the saturated tail for p99 without a rebuild; leave unset to keep the 0-error path.
+ENV IVF_SIMD_SCAN=1
+# Pin CIO's thread pools small (env-tunable): the default sizes from availableProcessors()
+# over-spawn under the 0.45-CPU NanoCpus quota and thrash the scheduler — the prime suspect
+# for the serving-bound ~17ms p99. Sweep CIO_CONN/WORKER/CALL_GROUP on the submission.
+ENV CIO_CONN_GROUP=1
+ENV CIO_WORKER_GROUP=2
+ENV CIO_CALL_GROUP=4
 EXPOSE 8080
 ENTRYPOINT ["/app/rinha-server"]
