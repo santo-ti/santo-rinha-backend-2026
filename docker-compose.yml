@@ -1,0 +1,51 @@
+# Submission stack — consumed by the Rinha evaluation from the `submission` branch.
+# The API image is pulled from a public registry (no `build:`), since the
+# `submission` branch carries no source code. The `ghcr.io/santo-ti/santo-rinha-backend-2026:1.15.2` placeholder is
+# replaced with the freshly published, immutable tag by
+# .github/workflows/publish-submission.yml when it materializes the branch.
+#
+# v1.9.0: EXACT bbox branch-and-bound search over a cell-split IVF index (split cap 256,
+# santannaf's algorithm) → ZERO routing error (det maxed at 3000). The cell scan now uses
+# a per-dimension early-exit (drops far candidates after a few of the 14 dims) to cut the
+# exact-search p99 tail while keeping the result bit-identical (E=0). Split 128 was tried
+# in v1.8.0 and REGRESSED p99 (more cells = more routing cost than tighter boxes saved),
+# so we stay at 256. NPROBE is IGNORED by the exact search, so it is not set here. LB is
+# HAProxy in TCP mode (the proven 4777 infra) — UDS was tried in v1.6.0 and FAILED the
+# contest health check ("No status"), so the API speaks plain TCP and HAProxy forwards bytes.
+x-api: &api
+  image: ghcr.io/santo-ti/santo-rinha-backend-2026:1.15.2
+  networks:
+    - rinha
+  deploy:
+    resources:
+      limits:
+        cpus: "0.45"
+        memory: "160MB"
+
+services:
+  api-1:
+    <<: *api
+
+  api-2:
+    <<: *api
+
+  lb:
+    image: haproxy:2.9-alpine
+    depends_on:
+      - api-1
+      - api-2
+    ports:
+      - "9999:9999"
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks:
+      - rinha
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: "30MB"
+
+networks:
+  rinha:
+    driver: bridge
