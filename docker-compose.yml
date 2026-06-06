@@ -1,3 +1,6 @@
+# Local dev / build stack — mirrors the submission topology (HAProxy + 2 API instances).
+# The real submission is materialized to the `submission` branch by the publish workflow
+# (submission/docker-compose.yml + haproxy.cfg). This file is for local `docker compose up`.
 x-api: &api
   build: .
   image: rinha-api:latest
@@ -6,7 +9,7 @@ x-api: &api
   deploy:
     resources:
       limits:
-        cpus: "0.425"
+        cpus: "0.45"
         memory: "160MB"
 
 services:
@@ -17,20 +20,20 @@ services:
     <<: *api
 
   lb:
-    image: nginx:1.27-alpine
+    image: haproxy:2.9-alpine
     depends_on:
       - api-1
       - api-2
     ports:
       - "9999:9999"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     networks:
       - rinha
     deploy:
       resources:
         limits:
-          cpus: "0.15"
+          cpus: "0.10"
           memory: "30MB"
 
 networks:
